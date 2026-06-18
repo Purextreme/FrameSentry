@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "framesentry"
+version = "0.1.0"
+description = "Local video self-check tool for detecting basic video issues and transient abnormal frames."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "opencv-python>=4.8",
+  "streamlit>=1.36",
+  "pyarrow<24",
+]
+
+[project.scripts]
+framesentry = "framesentry.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["framesentry*"]

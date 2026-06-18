@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local runtime output
+output/
+logs/
+todo.md
+
+# Local media used for manual checks
+测试用文件/
+*.mp4
+*.mov
+*.m4v
+*.avi
+*.mkv
+
+# Local secrets and editor files
+.env
+.env.*
+.vscode/
+.idea/
+*.log
