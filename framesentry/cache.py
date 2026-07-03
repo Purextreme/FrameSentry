@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass
+class CachedReport:
+    report_path: Path
+    report: dict
 
 
 def video_fingerprint(path: str | Path) -> dict:
@@ -14,53 +21,33 @@ def video_fingerprint(path: str | Path) -> dict:
     }
 
 
-def analysis_options(
-    *,
-    sample_scale: int,
-    max_outlier_frames: int,
-    save_screenshots: bool,
-) -> dict:
-    return {
-        "sample_scale": int(sample_scale),
-        "max_outlier_frames": int(max_outlier_frames),
-        "save_screenshots": bool(save_screenshots),
-    }
+class ReportCacheManager:
+    def __init__(self, output_root: str | Path = "output") -> None:
+        self.output_root = Path(output_root)
 
+    def find(self, video_path: str | Path) -> CachedReport | None:
+        if not self.output_root.exists():
+            return None
 
-def find_cached_report(
-    video_path: str | Path,
-    *,
-    output_root: str | Path = "output",
-    sample_scale: int,
-    max_outlier_frames: int,
-    save_screenshots: bool,
-) -> Path | None:
-    root = Path(output_root)
-    if not root.exists():
+        fingerprint = video_fingerprint(video_path)
+        candidates = sorted(
+            self.output_root.rglob("report.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for report_path in candidates:
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if is_same_video_report(report, fingerprint):
+                return CachedReport(report_path=report_path, report=report)
         return None
 
-    fingerprint = video_fingerprint(video_path)
-    options = analysis_options(
-        sample_scale=sample_scale,
-        max_outlier_frames=max_outlier_frames,
-        save_screenshots=save_screenshots,
-    )
-    candidates = sorted(root.rglob("report.json"), key=lambda path: path.stat().st_mtime, reverse=True)
-    for report_path in candidates:
-        try:
-            report = json.loads(report_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if is_cache_hit(report, fingerprint, options):
-            return report_path
-    return None
 
-
-def is_cache_hit(report: dict, fingerprint: dict, options: dict) -> bool:
-    modules = report.get("modules", {})
-    cached_fingerprint = modules.get("metadata", {}).get("data", {}).get("source_file")
-    cached_options = modules.get("frame_issues", {}).get("data", {}).get("analysis_options")
-    if not cached_fingerprint or not cached_options:
+def is_same_video_report(report: dict, fingerprint: dict) -> bool:
+    cached_fingerprint = report.get("modules", {}).get("metadata", {}).get("data", {}).get("source_file")
+    if not cached_fingerprint:
         return False
 
     if Path(cached_fingerprint.get("path", "")).resolve() != Path(fingerprint["path"]).resolve():
@@ -69,21 +56,4 @@ def is_cache_hit(report: dict, fingerprint: dict, options: dict) -> bool:
         return False
     if cached_fingerprint.get("modified_ns") != fingerprint["modified_ns"]:
         return False
-
-    if cached_options.get("sample_scale") != options["sample_scale"]:
-        return False
-    if cached_options.get("max_outlier_frames") != options["max_outlier_frames"]:
-        return False
-    if options["save_screenshots"] and not cached_options.get("save_screenshots"):
-        return False
-    if options["save_screenshots"] and not _has_usable_screenshot_records(report):
-        return False
     return True
-
-
-def _has_usable_screenshot_records(report: dict) -> bool:
-    frame_events = report.get("modules", {}).get("frame_issues", {}).get("events", [])
-    screenshotable_events = [event for event in frame_events if "start_frame" in event]
-    if not screenshotable_events:
-        return True
-    return all(event.get("screenshots") for event in screenshotable_events)

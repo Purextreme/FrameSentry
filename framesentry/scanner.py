@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .analysis import AnalysisRunner, ReportBuilder, VideoContext, build_summary
+from .analysis import AnalysisRunner, ReportBuilder, VideoContext
 from .analyzers import default_registry
 from .report.json_report import write_json_report
-from .cache import analysis_options, video_fingerprint
+from .cache import ReportCacheManager, video_fingerprint
+
+
+RUNTIME_CACHE_KEY = "_framesentry_runtime"
 
 
 def parse_fps_list(raw: str) -> set[float]:
@@ -17,6 +20,19 @@ def parse_fps_list(raw: str) -> set[float]:
     return values
 
 
+def analysis_options(
+    *,
+    sample_scale: int,
+    max_outlier_frames: int,
+    save_screenshots: bool,
+) -> dict:
+    return {
+        "sample_scale": int(sample_scale),
+        "max_outlier_frames": int(max_outlier_frames),
+        "save_screenshots": bool(save_screenshots),
+    }
+
+
 def scan_video(
     input_path: str | Path,
     output_dir: str | Path,
@@ -25,10 +41,22 @@ def scan_video(
     max_outlier_frames: int = 2,
     fps_normal: str | set[float] = "25,30,50,60",
     save_screenshots: bool = False,
+    use_cache: bool = True,
+    cache_root: str | Path = "output",
 ) -> dict:
     video_path = Path(input_path)
     report_dir = Path(output_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
+
+    if use_cache:
+        cached = ReportCacheManager(cache_root).find(video_path)
+        if cached:
+            report = dict(cached.report)
+            report[RUNTIME_CACHE_KEY] = {
+                "cache_hit": True,
+                "report_path": str(cached.report_path),
+            }
+            return report
 
     fps_values = parse_fps_list(fps_normal) if isinstance(fps_normal, str) else fps_normal
     context = VideoContext(
@@ -52,5 +80,10 @@ def scan_video(
     module_results = AnalysisRunner(default_registry()).run(context)
     report = ReportBuilder().build(context, module_results)
 
-    write_json_report(report, report_dir / "report.json")
+    report_path = report_dir / "report.json"
+    write_json_report(report, report_path)
+    report[RUNTIME_CACHE_KEY] = {
+        "cache_hit": False,
+        "report_path": str(report_path),
+    }
     return report

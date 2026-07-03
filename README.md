@@ -55,7 +55,7 @@ http://127.0.0.1:8501/
 4. 在“事件概览”中按置信度和异常类型筛选。
 5. 在“截图复核”中查看异常前一帧、当前帧和后一帧。
 
-如果同一个视频文件之前已经分析过，并且文件大小、修改时间和分析参数都没有变化，前端会自动读取缓存报告。若缓存报告缺少截图记录，而本次勾选了“保存异常截图”，则会重新分析。
+如果同一个视频文件之前已经分析过，并且文件大小和修改时间没有变化，前端会读取缓存报告。缓存是统一的 report 级缓存，不按单个 analyzer 补跑；如果旧报告缺少后续新增模块，该模块会保持为空。
 
 ## 报告输出
 
@@ -92,7 +92,7 @@ FrameSentry 的扫描流程已拆成 modular analyzer 架构：
 }
 ```
 
-模块事件按 analyzer 分组存放，不再输出旧版顶层 `events`、`thresholds`、`source_file` 和 `analysis_options`。缓存所需的文件指纹和分析参数分别存放在 `modules.metadata.data.source_file` 和 `modules.frame_issues.data.analysis_options`。
+模块事件按 analyzer 分组存放，不再输出旧版顶层 `events`、`thresholds`、`source_file` 和 `analysis_options`。缓存只用 `modules.metadata.data.source_file` 中的视频文件指纹判断同一文件是否未变化，不检查分析参数。
 
 ## 异常类型
 

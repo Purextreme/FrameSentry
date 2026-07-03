@@ -8,9 +8,8 @@ from tkinter import Tk, filedialog
 import pandas as pd
 import streamlit as st
 
-from framesentry.cache import find_cached_report
 from framesentry.presentation import EVENT_TYPE_LABELS, event_type_label, summary_label
-from framesentry.scanner import scan_video
+from framesentry.scanner import RUNTIME_CACHE_KEY, scan_video
 
 
 st.set_page_config(page_title="FrameSentry 视频自审", layout="wide")
@@ -31,7 +30,7 @@ def main() -> None:
         st.header("分析设置")
         if "video_path" not in st.session_state:
             st.session_state["video_path"] = ""
-        if st.button("选择视频文件", use_container_width=True):
+        if st.button("选择视频文件", width="stretch"):
             selected_path = choose_video_file()
             if selected_path:
                 st.session_state["video_path"] = selected_path
@@ -45,18 +44,18 @@ def main() -> None:
         save_screenshots = st.checkbox("保存异常截图", value=True)
         use_cache = st.checkbox("同文件未变化时读取缓存", value=True)
         show_debug = st.checkbox("显示调试信息", value=False)
-        run_scan = st.button("开始分析", type="primary", use_container_width=True)
+        run_scan = st.button("开始分析", type="primary", width="stretch")
 
         st.divider()
         st.header("打开已有报告")
         if "existing_report" not in st.session_state:
             st.session_state["existing_report"] = ""
-        if st.button("选择 report.json", use_container_width=True):
+        if st.button("选择 report.json", width="stretch"):
             selected_report = choose_report_file()
             if selected_report:
                 st.session_state["existing_report"] = selected_report
         existing_report = st.text_input("report.json 路径", key="existing_report")
-        load_report = st.button("读取报告", use_container_width=True)
+        load_report = st.button("读取报告", width="stretch")
 
     if run_scan:
         if not video_path.strip():
@@ -64,30 +63,23 @@ def main() -> None:
         elif not Path(video_path).exists():
             st.error("视频文件不存在，请检查路径。")
         else:
-            cached_report = None
-            if use_cache:
-                cached_report = find_cached_report(
+            with st.spinner("正在分析视频，请稍候..."):
+                report = scan_video(
                     video_path,
-                    output_root="output",
+                    output_dir,
                     sample_scale=int(sample_scale),
                     max_outlier_frames=int(max_outlier_frames),
                     save_screenshots=save_screenshots,
+                    use_cache=use_cache,
                 )
-            if cached_report:
-                load_report_file(cached_report)
-                st.session_state["cache_message"] = f"已读取缓存报告：{cached_report}"
+            cache_info = report.pop(RUNTIME_CACHE_KEY, {})
+            report_path = Path(cache_info.get("report_path", Path(output_dir) / "report.json"))
+            st.session_state["report"] = report
+            st.session_state["report_dir"] = str(report_path.parent.resolve())
+            if cache_info.get("cache_hit"):
+                st.session_state["cache_message"] = f"已读取缓存报告：{report_path}"
                 st.success("检测到同文件未变化，已直接读取缓存报告。")
             else:
-                with st.spinner("正在分析视频，请稍候..."):
-                    report = scan_video(
-                        video_path,
-                        output_dir,
-                        sample_scale=int(sample_scale),
-                        max_outlier_frames=int(max_outlier_frames),
-                        save_screenshots=save_screenshots,
-                    )
-                st.session_state["report"] = report
-                st.session_state["report_dir"] = str(Path(output_dir))
                 st.session_state["cache_message"] = "未命中缓存，已完成重新分析。"
                 st.success("分析完成。")
 
@@ -202,7 +194,7 @@ def render_event_table(events: list[dict]) -> None:
         )
     st.dataframe(
         pd.DataFrame(rows),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         height=_event_table_height(len(rows)),
         column_config={
@@ -275,7 +267,7 @@ def render_screenshots(event: dict, report_dir: Path) -> None:
     label_map = {"before": "前一帧", "current": "当前帧", "after": "后一帧"}
     cols = st.columns(len(image_items))
     for col, (label, path) in zip(cols, image_items):
-        col.image(str(path), caption=label_map.get(label, label), use_container_width=True)
+        col.image(str(path), caption=label_map.get(label, label), width="stretch")
 
 
 def render_debug_info(events: list[dict], report_dir: Path, *, expanded: bool) -> None:
@@ -311,7 +303,7 @@ def render_debug_info(events: list[dict], report_dir: Path, *, expanded: bool) -
         )
         if missing_files:
             st.write("缺失截图文件示例")
-            st.dataframe(pd.DataFrame(missing_files[:20]), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(missing_files[:20]), width="stretch", hide_index=True)
 
 
 def load_report_file(report_path: Path) -> None:
