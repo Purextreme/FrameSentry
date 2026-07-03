@@ -4,7 +4,6 @@ from pathlib import Path
 
 from .analysis import AnalysisRunner, ReportBuilder, VideoContext, build_summary
 from .analyzers import default_registry
-from .report.html_report import write_html_report
 from .report.json_report import write_json_report
 from .cache import analysis_options, video_fingerprint
 
@@ -26,8 +25,6 @@ def scan_video(
     max_outlier_frames: int = 2,
     fps_normal: str | set[float] = "25,30,50,60",
     save_screenshots: bool = False,
-    write_json: bool = True,
-    write_html: bool = True,
 ) -> dict:
     video_path = Path(input_path)
     report_dir = Path(output_dir)
@@ -55,8 +52,5 @@ def scan_video(
     module_results = AnalysisRunner(default_registry()).run(context)
     report = ReportBuilder().build(context, module_results)
 
-    if write_json:
-        write_json_report(report, report_dir / "report.json")
-    if write_html:
-        write_html_report(report, report_dir / "report.html")
+    write_json_report(report, report_dir / "report.json")
     return report

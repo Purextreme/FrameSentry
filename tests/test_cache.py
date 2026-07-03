@@ -20,13 +20,24 @@ class CacheTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
-                        "source_file": video_fingerprint(video),
-                        "analysis_options": analysis_options(
-                            sample_scale=480,
-                            max_outlier_frames=2,
-                            save_screenshots=True,
-                        ),
-                        "events": [],
+                        "modules": {
+                            "metadata": {
+                                "data": {
+                                    "source_file": video_fingerprint(video),
+                                },
+                                "events": [],
+                            },
+                            "frame_issues": {
+                                "data": {
+                                    "analysis_options": analysis_options(
+                                        sample_scale=480,
+                                        max_outlier_frames=2,
+                                        save_screenshots=True,
+                                    ),
+                                },
+                                "events": [],
+                            },
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -61,19 +72,30 @@ class CacheTests(unittest.TestCase):
             report_path.write_text(
                 json.dumps(
                     {
-                        "source_file": video_fingerprint(video),
-                        "analysis_options": analysis_options(
-                            sample_scale=480,
-                            max_outlier_frames=2,
-                            save_screenshots=True,
-                        ),
-                        "events": [
-                            {
-                                "type": "duplicate_frame",
-                                "start_frame": 10,
-                                "end_frame": 10,
-                            }
-                        ],
+                        "modules": {
+                            "metadata": {
+                                "data": {
+                                    "source_file": video_fingerprint(video),
+                                },
+                                "events": [],
+                            },
+                            "frame_issues": {
+                                "data": {
+                                    "analysis_options": analysis_options(
+                                        sample_scale=480,
+                                        max_outlier_frames=2,
+                                        save_screenshots=True,
+                                    ),
+                                },
+                                "events": [
+                                    {
+                                        "type": "duplicate_frame",
+                                        "start_frame": 10,
+                                        "end_frame": 10,
+                                    }
+                                ],
+                            },
+                        },
                     }
                 ),
                 encoding="utf-8",

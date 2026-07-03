@@ -92,7 +92,7 @@ FrameSentry 的扫描流程已拆成 modular analyzer 架构：
 }
 ```
 
-为兼容已有前端、缓存和 CLI 输出，报告仍保留顶层 `video`、`summary`、`events`、`thresholds`、`source_file` 和 `analysis_options`。新代码应优先从 `modules.metadata` 和 `modules.frame_issues` 读取模块结果。
+模块事件按 analyzer 分组存放，不再输出旧版顶层 `events`、`thresholds`、`source_file` 和 `analysis_options`。缓存所需的文件指纹和分析参数分别存放在 `modules.metadata.data.source_file` 和 `modules.frame_issues.data.analysis_options`。
 
 ## 异常类型
 
@@ -102,25 +102,6 @@ FrameSentry 的扫描流程已拆成 modular analyzer 架构：
 - `疑似瞬时异常帧`：短片段与前后局部画面差异较高，变化覆盖整幅画面且色彩分布明显不同，可能是异常夹帧或剪辑残留帧。
 
 瞬时异常帧检测会结合全帧差异、局部网格变化覆盖率、颜色直方图差异和左右窗口稳定度，尽量降低局部快速运动或普通镜头切换造成的误报。
-
-## CLI 用法
-
-```bat
-.venv\Scripts\python.exe -m framesentry scan input.mp4 --output output/report --save-screenshots --json
-```
-
-常用参数：
-
-```text
---sample-scale 480
---max-outlier-frames 2
---fps-normal 25,30,50,60
---save-screenshots
---json
---html
-```
-
-CLI 仍保留 `--html` 参数，便于需要静态 HTML 的场景使用；前端分析默认不生成 HTML 报告。
 
 ## 测试
 

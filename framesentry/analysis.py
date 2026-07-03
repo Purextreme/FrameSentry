@@ -115,6 +115,10 @@ class ReportBuilder:
         events = _collect_events(modules)
         metadata_module = modules.get("metadata", {})
         frame_module = modules.get("frame_issues", {})
+        if "source_file" in context.settings and metadata_module:
+            metadata_module.setdefault("data", {})["source_file"] = context.settings["source_file"]
+        if "analysis_options" in context.settings and frame_module:
+            frame_module.setdefault("data", {})["analysis_options"] = context.settings["analysis_options"]
         video = (
             metadata_module.get("data", {}).get("video")
             or metadata_module.get("data", {}).get("metadata")
@@ -125,14 +129,7 @@ class ReportBuilder:
             "video": video,
             "summary": build_summary(events),
             "modules": modules,
-            "events": events,
         }
-        if "source_file" in context.settings:
-            report["source_file"] = context.settings["source_file"]
-        if "analysis_options" in context.settings:
-            report["analysis_options"] = context.settings["analysis_options"]
-        if "thresholds" in frame_module.get("data", {}):
-            report["thresholds"] = frame_module["data"]["thresholds"]
         return _json_safe(report)
 
 

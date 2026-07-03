@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -10,6 +9,10 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from framesentry.scanner import scan_video
+
 OUTPUT = ROOT / "output" / "synthetic_checks"
 FPS = 25
 SIZE = (160, 90)
@@ -32,10 +35,11 @@ def main() -> int:
         factory(video_path)
         run_scan(video_path, report_dir)
         report = json.loads((report_dir / "report.json").read_text(encoding="utf-8"))
-        event_types = {event["type"] for event in report["events"]}
+        events = collect_module_events(report)
+        event_types = {event["type"] for event in events}
         high_conf_transients = [
             event
-            for event in report["events"]
+            for event in events
             if event["type"] == "transient_outlier" and event.get("confidence", 0) >= 0.7
         ]
         missing = expected_types - event_types
@@ -51,22 +55,18 @@ def main() -> int:
     return 0
 
 
+def collect_module_events(report: dict) -> list[dict]:
+    events: list[dict] = []
+    for module in report.get("modules", {}).values():
+        events.extend(module.get("events", []))
+    return events
+
+
 def run_scan(video_path: Path, report_dir: Path) -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "framesentry",
-            "scan",
-            str(video_path),
-            "--output",
-            str(report_dir),
-            "--save-screenshots",
-            "--json",
-            "--html",
-        ],
-        cwd=ROOT,
-        check=True,
+    scan_video(
+        video_path,
+        report_dir,
+        save_screenshots=True,
     )
 
 

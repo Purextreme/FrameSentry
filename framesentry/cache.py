@@ -57,8 +57,9 @@ def find_cached_report(
 
 
 def is_cache_hit(report: dict, fingerprint: dict, options: dict) -> bool:
-    cached_fingerprint = report.get("source_file")
-    cached_options = report.get("analysis_options")
+    modules = report.get("modules", {})
+    cached_fingerprint = modules.get("metadata", {}).get("data", {}).get("source_file")
+    cached_options = modules.get("frame_issues", {}).get("data", {}).get("analysis_options")
     if not cached_fingerprint or not cached_options:
         return False
 
@@ -81,7 +82,8 @@ def is_cache_hit(report: dict, fingerprint: dict, options: dict) -> bool:
 
 
 def _has_usable_screenshot_records(report: dict) -> bool:
-    screenshotable_events = [event for event in report.get("events", []) if "start_frame" in event]
+    frame_events = report.get("modules", {}).get("frame_issues", {}).get("events", [])
+    screenshotable_events = [event for event in frame_events if "start_frame" in event]
     if not screenshotable_events:
         return True
     return all(event.get("screenshots") for event in screenshotable_events)

@@ -15,8 +15,5 @@ dependencies = [
   "pyarrow<24",
 ]
 
-[project.scripts]
-framesentry = "framesentry.cli:main"
-
 [tool.setuptools.packages.find]
 include = ["framesentry*"]

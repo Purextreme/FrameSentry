@@ -85,8 +85,6 @@ def main() -> None:
                         sample_scale=int(sample_scale),
                         max_outlier_frames=int(max_outlier_frames),
                         save_screenshots=save_screenshots,
-                        write_json=True,
-                        write_html=False,
                     )
                 st.session_state["report"] = report
                 st.session_state["report_dir"] = str(Path(output_dir))
@@ -115,16 +113,15 @@ def render_report(report: dict, report_dir: Path, *, show_debug: bool = False) -
     frame_issue_module = modules.get("frame_issues", {})
     video = _module_data(metadata_module).get("video") or report.get("video", {})
     summary = report.get("summary", {})
-    all_events = report.get("events", [])
-    metadata_events = metadata_module.get("events") or [event for event in all_events if event.get("type") == "metadata_warning"]
-    events = frame_issue_module.get("events") or [event for event in all_events if event.get("type") in ISSUE_EVENT_TYPES]
+    metadata_events = metadata_module.get("events", [])
+    events = frame_issue_module.get("events", [])
 
     st.subheader("视频基础信息")
     cols = st.columns(4)
     cols[0].metric("分辨率", f"{video.get('width')} x {video.get('height')}")
     cols[1].metric("帧率", video.get("fps"))
     cols[2].metric("时长（秒）", _format_number(video.get("duration")))
-    cols[3].metric("事件总数", len(all_events) if all_events else len(metadata_events) + len(events))
+    cols[3].metric("事件总数", len(metadata_events) + len(events))
     st.caption(str(video.get("path", "")))
     cache_message = st.session_state.get("cache_message")
     if cache_message:

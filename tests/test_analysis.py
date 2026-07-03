@@ -45,7 +45,7 @@ class AnalysisCoreTests(unittest.TestCase):
         self.assertEqual(results["broken"].status, "failed")
         self.assertEqual(results["ok"].status, "completed")
 
-    def test_report_builder_keeps_module_and_legacy_fields(self) -> None:
+    def test_report_builder_uses_module_schema(self) -> None:
         context = VideoContext(
             video_path="input.mp4",
             output_dir="output/report",
@@ -73,8 +73,17 @@ class AnalysisCoreTests(unittest.TestCase):
 
         self.assertIn("modules", report)
         self.assertIn("metadata", report["modules"])
-        self.assertEqual(report["events"][0]["type"], "black_frame")
-        self.assertEqual(report["thresholds"], {"high_diff": 18.0})
+        self.assertEqual(report["modules"]["frame_issues"]["events"][0]["type"], "black_frame")
+        self.assertEqual(report["modules"]["frame_issues"]["data"]["thresholds"], {"high_diff": 18.0})
+        self.assertEqual(report["modules"]["metadata"]["data"]["source_file"], {"path": "input.mp4"})
+        self.assertEqual(
+            report["modules"]["frame_issues"]["data"]["analysis_options"],
+            {"sample_scale": 480, "max_outlier_frames": 2, "save_screenshots": False},
+        )
+        self.assertNotIn("events", report)
+        self.assertNotIn("thresholds", report)
+        self.assertNotIn("source_file", report)
+        self.assertNotIn("analysis_options", report)
 
 
 class AnalyzerReturnTests(unittest.TestCase):
@@ -134,7 +143,6 @@ class StreamlitReportTests(unittest.TestCase):
         report = {
             "video": {},
             "summary": {"metadata_warnings": 0, "black_frames": 0},
-            "events": [],
             "modules": {
                 "metadata": {
                     "module_name": "Metadata",
