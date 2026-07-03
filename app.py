@@ -103,6 +103,7 @@ def render_report(report: dict, report_dir: Path, *, show_debug: bool = False) -
     modules = report.get("modules", {})
     metadata_module = modules.get("metadata", {})
     frame_issue_module = modules.get("frame_issues", {})
+    color_module = modules.get("color_analysis", {})
     video = _module_data(metadata_module).get("video") or report.get("video", {})
     summary = report.get("summary", {})
     metadata_events = metadata_module.get("events", [])
@@ -118,54 +119,62 @@ def render_report(report: dict, report_dir: Path, *, show_debug: bool = False) -
     cache_message = st.session_state.get("cache_message")
     if cache_message:
         st.info(cache_message)
-    render_module_errors(metadata_module)
-    render_module_errors(frame_issue_module)
 
-    st.subheader("异常摘要")
-    summary_cols = st.columns(3)
-    for index, (key, value) in enumerate(summary.items()):
-        summary_cols[index % 3].metric(summary_label(key), value)
+    overview_tab, metadata_tab, frame_tab, color_tab = st.tabs(
+        ["Overview", "Metadata", "Frame Issues", "Color Analysis"]
+    )
 
-    with st.expander("Metadata", expanded=bool(metadata_events)):
+    with overview_tab:
+        st.subheader("异常摘要")
+        summary_cols = st.columns(3)
+        for index, (key, value) in enumerate(summary.items()):
+            summary_cols[index % 3].metric(summary_label(key), value)
+
+    with metadata_tab:
         if metadata_module:
             st.caption(_module_status_text(metadata_module))
+        render_module_errors(metadata_module)
         if metadata_events:
             render_event_table(metadata_events)
         else:
             st.info("没有基础信息提示。")
 
-    st.subheader("Frame Issues")
-    if frame_issue_module:
-        st.caption(_module_status_text(frame_issue_module))
+    with frame_tab:
+        if frame_issue_module:
+            st.caption(_module_status_text(frame_issue_module))
+        render_module_errors(frame_issue_module)
 
-    st.subheader("筛选")
-    confidence = st.slider("最低置信度", min_value=0.0, max_value=1.0, value=0.7, step=0.05)
-    labels = [
-        "全部异常",
-        event_type_label("duplicate_frame"),
-        event_type_label("black_frame"),
-        event_type_label("blank_frame"),
-        event_type_label("transient_outlier"),
-    ]
-    selected_label = st.selectbox("异常类型", labels, index=0)
-    selected_type = _event_type_from_label(selected_label)
-    filtered = []
-    for event in events:
-        event_confidence = float(event.get("confidence", 1.0))
-        event_type = event.get("type", "")
-        if event_confidence < confidence:
-            continue
-        if selected_label == "全部异常" and event_type not in ISSUE_EVENT_TYPES:
-            continue
-        if selected_type and event_type != selected_type:
-            continue
-        filtered.append(event)
+        st.subheader("筛选")
+        confidence = st.slider("最低置信度", min_value=0.0, max_value=1.0, value=0.7, step=0.05)
+        labels = [
+            "全部异常",
+            event_type_label("duplicate_frame"),
+            event_type_label("black_frame"),
+            event_type_label("blank_frame"),
+            event_type_label("transient_outlier"),
+        ]
+        selected_label = st.selectbox("异常类型", labels, index=0)
+        selected_type = _event_type_from_label(selected_label)
+        filtered = []
+        for event in events:
+            event_confidence = float(event.get("confidence", 1.0))
+            event_type = event.get("type", "")
+            if event_confidence < confidence:
+                continue
+            if selected_label == "全部异常" and event_type not in ISSUE_EVENT_TYPES:
+                continue
+            if selected_type and event_type != selected_type:
+                continue
+            filtered.append(event)
 
-    st.subheader("事件概览")
-    st.caption(f"当前显示 {len(filtered)} / {len(events)} 个事件。")
-    render_event_table(filtered)
-    render_event_review_list(filtered, report_dir)
-    render_debug_info(filtered, report_dir, expanded=show_debug)
+        st.subheader("事件概览")
+        st.caption(f"当前显示 {len(filtered)} / {len(events)} 个事件。")
+        render_event_table(filtered)
+        render_event_review_list(filtered, report_dir)
+        render_debug_info(filtered, report_dir, expanded=show_debug)
+
+    with color_tab:
+        render_color_analysis(color_module)
 
 
 def render_module_errors(module: dict) -> None:
@@ -174,6 +183,77 @@ def render_module_errors(module: dict) -> None:
     errors = module.get("errors") or []
     message = errors[0].get("message") if errors and isinstance(errors[0], dict) else "模块运行失败。"
     st.error(f"{module.get('module_name', 'Analyzer')}: {message}")
+
+
+def render_color_analysis(module: dict) -> None:
+    if not module:
+        st.info("当前报告没有颜色分析数据。关闭缓存并重新分析可生成颜色趋势图。")
+        return
+
+    st.caption(_module_status_text(module))
+    render_module_errors(module)
+    if module.get("status") == "failed":
+        return
+
+    data = _module_data(module)
+    samples = data.get("samples") or []
+    if not samples:
+        st.info("当前报告没有颜色分析数据。")
+        return
+
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("采样点", summary.get("sample_count", len(samples)))
+    metric_cols[1].metric("平均色相", _format_number(summary.get("average_hue")))
+    metric_cols[2].metric("平均饱和度", _format_number(summary.get("average_saturation")))
+    metric_cols[3].metric("平均亮度", _format_number(summary.get("average_value")))
+
+    detail_cols = st.columns(3)
+    detail_cols[0].metric("平均色彩离散度", _format_number(summary.get("average_color_dispersion")))
+    detail_cols[1].metric("平均对比度", _format_number(summary.get("average_contrast")))
+    detail_cols[2].metric("平均冷暖倾向", _format_number(summary.get("average_warmth")))
+
+    frame = pd.DataFrame(samples).sort_values("frame_index")
+    render_line_chart(frame, "HSV 主色趋势", ["dominant_hue", "dominant_saturation", "dominant_value"])
+    render_line_chart(frame, "色彩离散度趋势", ["color_dispersion"])
+    render_line_chart(frame, "亮度 / 对比度趋势", ["brightness_dispersion", "contrast_score"])
+    render_line_chart(frame, "冷暖倾向趋势", ["warmth_score"])
+
+    with st.expander("采样数据", expanded=False):
+        columns = [
+            "frame_index",
+            "timestamp",
+            "dominant_color_hex",
+            "dominant_hue",
+            "dominant_saturation",
+            "dominant_value",
+            "color_dispersion",
+            "brightness_dispersion",
+            "contrast_score",
+            "warmth_score",
+            "dominant_coverage",
+        ]
+        visible_columns = [column for column in columns if column in frame.columns]
+        st.dataframe(frame[visible_columns], width="stretch", hide_index=True)
+
+
+def render_line_chart(frame: pd.DataFrame, title: str, columns: list[str]) -> None:
+    labels = {
+        "dominant_hue": "H 色相",
+        "dominant_saturation": "S 饱和度",
+        "dominant_value": "V 亮度",
+        "color_dispersion": "色彩离散度",
+        "brightness_dispersion": "亮度离散度",
+        "contrast_score": "对比度",
+        "warmth_score": "冷暖倾向",
+    }
+    visible_columns = [column for column in columns if column in frame.columns]
+    if not visible_columns:
+        return
+
+    st.subheader(title)
+    chart_frame = frame[["frame_index", *visible_columns]].rename(columns={"frame_index": "帧", **labels})
+    st.line_chart(chart_frame, x="帧", y=[labels[column] for column in visible_columns], height=280)
 
 
 def render_event_table(events: list[dict]) -> None:

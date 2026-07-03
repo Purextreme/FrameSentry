@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .analysis import AnalysisRunner, ReportBuilder, VideoContext
+from .analyzers.color_analysis import DEFAULT_COLOR_SAMPLE_LIMIT
 from .analyzers import default_registry
 from .report.json_report import write_json_report
 from .cache import ReportCacheManager, video_fingerprint
@@ -68,6 +69,7 @@ def scan_video(
             "sample_scale": sample_scale,
             "max_outlier_frames": max_outlier_frames,
             "save_screenshots": save_screenshots,
+            "color_sample_limit": DEFAULT_COLOR_SAMPLE_LIMIT,
             "source_file": video_fingerprint(video_path),
             "analysis_options": analysis_options(
                 sample_scale=sample_scale,
