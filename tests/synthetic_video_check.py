@@ -23,7 +23,6 @@ def main() -> int:
         "single_outlier": (make_single_outlier_video, {"transient_outlier"}),
         "double_outlier": (make_double_outlier_video, {"transient_outlier"}),
         "local_fast_motion": (make_local_fast_motion_video, set()),
-        "rapid_cut": (make_rapid_cut_video, {"rapid_change_review"}),
     }
 
     failures: list[str] = []
@@ -111,14 +110,6 @@ def make_local_fast_motion_video(path: Path) -> None:
         cv2.rectangle(frame, (x, 24), (x + 34, 66), (245, 245, 245), -1)
         cv2.line(frame, (0, 12), (SIZE[0] - 1, 12), (45, 150, 90), 2)
         frames.append(frame)
-    write_video(path, frames)
-
-
-def make_rapid_cut_video(path: Path) -> None:
-    frames = []
-    colors = [(30, 80, 170), (170, 50, 40), (40, 160, 80), (180, 160, 30), (80, 40, 170)]
-    for color in colors * 2:
-        frames.extend(textured_frames(color, 1))
     write_video(path, frames)
 
 

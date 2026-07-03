@@ -69,11 +69,36 @@ output/reports/视频文件名_时间戳/
 
 `report.json` 保留完整检测结果。前端中的置信度和类型筛选只影响当前显示，不会删除原始事件。
 
+## 模块化分析架构
+
+FrameSentry 的扫描流程已拆成 modular analyzer 架构：
+
+- `VideoContext`：统一传入 analyzer 的视频路径、输出目录、分析参数、metadata 和 artifact 目录，路径使用 `pathlib.Path`。
+- `ModuleResult`：每个 analyzer 的统一输出结构，包含 `status`、`severity`、`summary`、`events`、`charts`、`tables`、`assets`、`data`、`warnings` 和 `errors`。
+- `AnalyzerRegistry`：按顺序注册 analyzer。当前默认注册 `MetadataAnalyzer` 和 `FrameIssueAnalyzer`。
+- `AnalysisRunner`：逐个运行 analyzer，并隔离单个模块异常；某个 analyzer 失败时会生成 `failed` 模块结果，其他 analyzer 继续运行。
+- `ReportBuilder`：把模块结果汇总为最终 `report.json`。
+
+新的 `report.json` 以 `modules` 为主结构：
+
+```json
+{
+  "video": {},
+  "summary": {},
+  "modules": {
+    "metadata": {},
+    "frame_issues": {}
+  }
+}
+```
+
+为兼容已有前端、缓存和 CLI 输出，报告仍保留顶层 `video`、`summary`、`events`、`thresholds`、`source_file` 和 `analysis_options`。新代码应优先从 `modules.metadata` 和 `modules.frame_issues` 读取模块结果。
+
 ## 异常类型
 
 - `疑似黑帧`：画面亮度极低，可能是异常黑场。
 - `疑似灰帧 / 空画面`：画面亮度波动和边缘密度都很低，可能是灰帧或空画面。
-- `疑似重复帧`：当前帧与上一帧差异极低，但前后局部存在明显变化，可能是 1-2 帧重复。
+- `疑似重复帧`：当前帧与上一帧差异极低，但前后局部存在明显变化，可能是 1-2 帧重复；如果 60 秒窗口内出现超过 10 个间断性重复帧，会附带可能掉帧或帧率不足的复核提示。
 - `疑似瞬时异常帧`：短片段与前后局部画面差异较高，变化覆盖整幅画面且色彩分布明显不同，可能是异常夹帧或剪辑残留帧。
 
 瞬时异常帧检测会结合全帧差异、局部网格变化覆盖率、颜色直方图差异和左右窗口稳定度，尽量降低局部快速运动或普通镜头切换造成的误报。

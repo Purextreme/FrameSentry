@@ -110,25 +110,44 @@ def main() -> None:
 
 
 def render_report(report: dict, report_dir: Path, *, show_debug: bool = False) -> None:
-    video = report.get("video", {})
+    modules = report.get("modules", {})
+    metadata_module = modules.get("metadata", {})
+    frame_issue_module = modules.get("frame_issues", {})
+    video = _module_data(metadata_module).get("video") or report.get("video", {})
     summary = report.get("summary", {})
-    events = report.get("events", [])
+    all_events = report.get("events", [])
+    metadata_events = metadata_module.get("events") or [event for event in all_events if event.get("type") == "metadata_warning"]
+    events = frame_issue_module.get("events") or [event for event in all_events if event.get("type") in ISSUE_EVENT_TYPES]
 
     st.subheader("视频基础信息")
     cols = st.columns(4)
     cols[0].metric("分辨率", f"{video.get('width')} x {video.get('height')}")
     cols[1].metric("帧率", video.get("fps"))
     cols[2].metric("时长（秒）", _format_number(video.get("duration")))
-    cols[3].metric("事件总数", len(events))
+    cols[3].metric("事件总数", len(all_events) if all_events else len(metadata_events) + len(events))
     st.caption(str(video.get("path", "")))
     cache_message = st.session_state.get("cache_message")
     if cache_message:
         st.info(cache_message)
+    render_module_errors(metadata_module)
+    render_module_errors(frame_issue_module)
 
     st.subheader("异常摘要")
     summary_cols = st.columns(3)
     for index, (key, value) in enumerate(summary.items()):
         summary_cols[index % 3].metric(summary_label(key), value)
+
+    with st.expander("Metadata", expanded=bool(metadata_events)):
+        if metadata_module:
+            st.caption(_module_status_text(metadata_module))
+        if metadata_events:
+            render_event_table(metadata_events)
+        else:
+            st.info("没有基础信息提示。")
+
+    st.subheader("Frame Issues")
+    if frame_issue_module:
+        st.caption(_module_status_text(frame_issue_module))
 
     st.subheader("筛选")
     confidence = st.slider("最低置信度", min_value=0.0, max_value=1.0, value=0.7, step=0.05)
@@ -158,6 +177,14 @@ def render_report(report: dict, report_dir: Path, *, show_debug: bool = False) -
     render_event_table(filtered)
     render_event_review_list(filtered, report_dir)
     render_debug_info(filtered, report_dir, expanded=show_debug)
+
+
+def render_module_errors(module: dict) -> None:
+    if module.get("status") != "failed":
+        return
+    errors = module.get("errors") or []
+    message = errors[0].get("message") if errors and isinstance(errors[0], dict) else "模块运行失败。"
+    st.error(f"{module.get('module_name', 'Analyzer')}: {message}")
 
 
 def render_event_table(events: list[dict]) -> None:
@@ -363,6 +390,15 @@ def _event_type_from_label(label: str) -> str | None:
         if label == event_label:
             return event_type
     return None
+
+
+def _module_data(module: dict) -> dict:
+    data = module.get("data")
+    return data if isinstance(data, dict) else {}
+
+
+def _module_status_text(module: dict) -> str:
+    return f"{module.get('module_name', 'Analyzer')} status: {module.get('status', 'unknown')}"
 
 
 def _format_number(value) -> str:

@@ -7,7 +7,6 @@ EVENT_TYPE_LABELS = {
     "blank_frame": "疑似灰帧 / 空画面",
     "duplicate_frame": "疑似重复帧",
     "transient_outlier": "疑似瞬时异常帧",
-    "rapid_change_review": "快速连续变化，建议复核",
 }
 
 
@@ -17,7 +16,6 @@ SUMMARY_LABELS = {
     "blank_frames": "疑似灰帧 / 空画面",
     "duplicate_frames": "疑似重复帧",
     "transient_outliers": "疑似瞬时异常帧",
-    "rapid_change_reviews": "快速连续变化复核",
 }
 
 

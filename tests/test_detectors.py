@@ -1,6 +1,6 @@
 import unittest
 
-from framesentry.detectors.duplicate_frame import detect_duplicate_frames
+from framesentry.detectors.duplicate_frame import detect_duplicate_frames, mark_periodic_duplicate_frame_warnings
 from framesentry.detectors.transient_outlier import detect_transient_outliers
 from framesentry.frame_reader import FrameMetric
 from framesentry.metrics import adaptive_thresholds
@@ -32,6 +32,18 @@ def low_detail_metric(index, diff):
         block_mean_diff_to_prev=diff,
         block_change_ratio_to_prev=0,
     )
+
+
+def duplicate_events(start_frames) -> list[dict]:
+    return [
+        {
+            "type": "duplicate_frame",
+            "start_frame": frame,
+            "end_frame": frame,
+            "reason": "该帧与上一帧差异极低。",
+        }
+        for frame in start_frames
+    ]
 
 
 class DetectorTests(unittest.TestCase):
@@ -76,6 +88,30 @@ class DetectorTests(unittest.TestCase):
         events = detect_duplicate_frames(metrics, 25, thresholds, window=3)
 
         self.assertEqual(events, [])
+
+    def test_periodic_duplicate_warning_marks_more_than_ten_events_in_sixty_seconds(self):
+        events = duplicate_events(range(0, 275, 25))
+
+        mark_periodic_duplicate_frame_warnings(events, 25)
+
+        self.assertTrue(all(event.get("pattern_warning") for event in events))
+        self.assertEqual(events[0]["pattern_window_seconds"], 60)
+        self.assertEqual(events[0]["pattern_duplicate_events"], 11)
+        self.assertIn("可能存在掉帧或帧率不足", events[0]["reason"])
+
+    def test_periodic_duplicate_warning_does_not_mark_ten_events(self):
+        events = duplicate_events(range(0, 250, 25))
+
+        mark_periodic_duplicate_frame_warnings(events, 25)
+
+        self.assertFalse(any(event.get("pattern_warning") for event in events))
+
+    def test_periodic_duplicate_warning_does_not_mark_events_outside_window(self):
+        events = duplicate_events(index * 175 for index in range(11))
+
+        mark_periodic_duplicate_frame_warnings(events, 25)
+
+        self.assertFalse(any(event.get("pattern_warning") for event in events))
 
     def test_detect_transient_outlier_single_frame(self):
         diffs = [None, 2, 2, 2, 40, 42, 2, 2, 2]

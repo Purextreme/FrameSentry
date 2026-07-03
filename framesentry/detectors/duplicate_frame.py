@@ -7,6 +7,9 @@ from ..metrics import confidence_from_margin
 from ..utils.timecode import frame_to_timecode
 
 
+PERIODIC_DUPLICATE_REASON = "同一 60 秒窗口内出现多次间断性重复帧，可能存在掉帧或帧率不足，建议人工复核。"
+
+
 def detect_duplicate_frames(metrics: list[FrameMetric], fps: float, thresholds: dict[str, float], window: int = 5) -> list[dict]:
     events: list[dict] = []
     low_threshold = thresholds["very_low_diff"]
@@ -58,6 +61,44 @@ def detect_duplicate_frames(metrics: list[FrameMetric], fps: float, thresholds: 
                 }
             )
         index += 1
+    return events
+
+
+def mark_periodic_duplicate_frame_warnings(
+    events: list[dict],
+    fps: float,
+    *,
+    window_seconds: int = 60,
+    threshold: int = 10,
+) -> list[dict]:
+    if fps <= 0 or window_seconds <= 0 or threshold < 1:
+        return events
+
+    duplicate_events = [
+        event
+        for event in events
+        if event.get("type") == "duplicate_frame" and isinstance(event.get("start_frame"), (int, float))
+    ]
+    duplicate_events.sort(key=lambda event: float(event["start_frame"]))
+
+    window_frames = fps * window_seconds
+    for start_index, start_event in enumerate(duplicate_events):
+        start_frame = float(start_event["start_frame"])
+        window_events = [
+            event
+            for event in duplicate_events[start_index:]
+            if float(event["start_frame"]) - start_frame <= window_frames
+        ]
+        if len(window_events) <= threshold:
+            continue
+
+        for event in window_events:
+            event["pattern_warning"] = True
+            event["pattern_window_seconds"] = window_seconds
+            event["pattern_duplicate_events"] = max(event.get("pattern_duplicate_events", 0), len(window_events))
+            if PERIODIC_DUPLICATE_REASON not in event.get("reason", ""):
+                event["reason"] = f"{event.get('reason', '')} {PERIODIC_DUPLICATE_REASON}".strip()
+
     return events
 
 
