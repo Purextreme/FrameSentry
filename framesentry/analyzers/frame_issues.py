@@ -19,7 +19,6 @@ class FrameIssueAnalyzer(BaseAnalyzer):
         context.metadata = metadata
         sample_scale = int(context.settings.get("sample_scale", 480))
         max_outlier_frames = int(context.settings.get("max_outlier_frames", 2))
-        save_screenshots = bool(context.settings.get("save_screenshots", False))
 
         frame_metrics = read_frame_metrics(context.video_path, sample_scale=sample_scale, fps=metadata.fps)
         thresholds = adaptive_thresholds(
@@ -41,7 +40,7 @@ class FrameIssueAnalyzer(BaseAnalyzer):
             )
         )
 
-        if save_screenshots:
+        if events:
             save_event_screenshots(context.video_path, events, context.artifact_dir / "screenshots")
 
         return ModuleResult(

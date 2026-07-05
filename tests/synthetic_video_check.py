@@ -66,7 +66,6 @@ def run_scan(video_path: Path, report_dir: Path) -> None:
     scan_video(
         video_path,
         report_dir,
-        save_screenshots=True,
         use_cache=False,
     )
 

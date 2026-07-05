@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
+import platform
+import shutil
 from datetime import datetime
 from pathlib import Path
-from tkinter import Tk, filedialog
 
 import pandas as pd
 import streamlit as st
@@ -11,6 +13,8 @@ import streamlit as st
 from framesentry.presentation import EVENT_TYPE_LABELS, event_type_label, summary_label
 from framesentry.scanner import RUNTIME_CACHE_KEY, scan_video
 
+
+LOGGER = logging.getLogger(__name__)
 
 st.set_page_config(page_title="FrameSentry 视频自审", layout="wide")
 
@@ -21,6 +25,14 @@ ISSUE_EVENT_TYPES = {
     "transient_outlier",
 }
 
+COLOR_METRIC_HELP = {
+    "hsv": "HSV 主色来自每个采样帧的主色聚类：H 色相单位为度，范围 0-360；S 饱和度和 V 亮度单位为百分比，范围 0-100%。",
+    "color_dispersion": "色彩离散度是 B/G/R 三个颜色通道标准差的平均值，并归一化为 0-100%。数值越高，画面颜色分布越分散。",
+    "brightness_dispersion": "亮度离散度是灰度亮度标准差，并归一化为 0-100%。数值越高，画面明暗分布越分散。",
+    "contrast_score": "对比度使用灰度亮度第 95 百分位与第 5 百分位的差值，并归一化为 0-100%。",
+    "warmth_score": "冷暖倾向 = 平均红色通道减平均蓝色通道，并归一化到 -100 到 100；正值偏暖，负值偏冷，接近 0 更中性。",
+}
+
 
 def main() -> None:
     st.title("FrameSentry 视频自审")
@@ -28,32 +40,48 @@ def main() -> None:
 
     with st.sidebar:
         st.header("分析设置")
+        native_file_dialog_available = is_native_file_dialog_available()
         if "video_path" not in st.session_state:
             st.session_state["video_path"] = ""
-        if st.button("选择视频文件", width="stretch"):
+        if st.button("选择视频文件", width="stretch", disabled=not native_file_dialog_available):
             selected_path = choose_video_file()
             if selected_path:
                 st.session_state["video_path"] = selected_path
                 st.session_state["output_dir"] = default_output_dir(selected_path)
+        if not native_file_dialog_available:
+            st.caption("macOS 测试时请直接粘贴文件路径。")
+        uploaded_video = st.file_uploader(
+            "上传视频文件",
+            type=["mp4", "mov", "m4v", "avi", "mkv"],
+            key="video_upload",
+        )
+        if uploaded_video is not None:
+            uploaded_path = save_uploaded_file(uploaded_video, Path("output") / "uploads" / "videos")
+            uploaded_path_str = str(uploaded_path)
+            if st.session_state["video_path"] != uploaded_path_str:
+                st.session_state["video_path"] = uploaded_path_str
+                st.session_state["output_dir"] = default_output_dir(uploaded_path_str)
         video_path = st.text_input("视频文件路径", key="video_path")
         if "output_dir" not in st.session_state:
             st.session_state["output_dir"] = "output/reports"
         output_dir = st.text_input("记录输出目录", key="output_dir")
         sample_scale = st.number_input("分析缩略尺寸", min_value=160, max_value=1080, value=480, step=40)
         max_outlier_frames = st.number_input("瞬时异常最大持续帧数", min_value=1, max_value=5, value=2, step=1)
-        save_screenshots = st.checkbox("保存异常截图", value=True)
         use_cache = st.checkbox("同文件未变化时读取缓存", value=True)
-        show_debug = st.checkbox("显示调试信息", value=False)
         run_scan = st.button("开始分析", type="primary", width="stretch")
 
         st.divider()
         st.header("打开已有报告")
         if "existing_report" not in st.session_state:
             st.session_state["existing_report"] = ""
-        if st.button("选择 report.json", width="stretch"):
+        if st.button("选择 report.json", width="stretch", disabled=not native_file_dialog_available):
             selected_report = choose_report_file()
             if selected_report:
                 st.session_state["existing_report"] = selected_report
+        uploaded_report = st.file_uploader("上传 report.json", type=["json"], key="report_upload")
+        if uploaded_report is not None:
+            uploaded_report_path = save_uploaded_file(uploaded_report, Path("output") / "uploads" / "reports")
+            st.session_state["existing_report"] = str(uploaded_report_path)
         existing_report = st.text_input("report.json 路径", key="existing_report")
         load_report = st.button("读取报告", width="stretch")
 
@@ -69,7 +97,6 @@ def main() -> None:
                     output_dir,
                     sample_scale=int(sample_scale),
                     max_outlier_frames=int(max_outlier_frames),
-                    save_screenshots=save_screenshots,
                     use_cache=use_cache,
                 )
             cache_info = report.pop(RUNTIME_CACHE_KEY, {})
@@ -96,10 +123,10 @@ def main() -> None:
         st.info("请在左侧指定视频并开始分析，或读取已有 report.json。")
         return
 
-    render_report(report, Path(st.session_state.get("report_dir", ".")), show_debug=show_debug)
+    render_report(report, Path(st.session_state.get("report_dir", ".")))
 
 
-def render_report(report: dict, report_dir: Path, *, show_debug: bool = False) -> None:
+def render_report(report: dict, report_dir: Path) -> None:
     modules = report.get("modules", {})
     metadata_module = modules.get("metadata", {})
     frame_issue_module = modules.get("frame_issues", {})
@@ -171,7 +198,7 @@ def render_report(report: dict, report_dir: Path, *, show_debug: bool = False) -
         st.caption(f"当前显示 {len(filtered)} / {len(events)} 个事件。")
         render_event_table(filtered)
         render_event_review_list(filtered, report_dir)
-        render_debug_info(filtered, report_dir, expanded=show_debug)
+        log_debug_info(filtered, report_dir)
 
     with color_tab:
         render_color_analysis(color_module)
@@ -204,20 +231,29 @@ def render_color_analysis(module: dict) -> None:
     summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
     metric_cols = st.columns(4)
     metric_cols[0].metric("采样点", summary.get("sample_count", len(samples)))
-    metric_cols[1].metric("平均色相", _format_number(summary.get("average_hue")))
-    metric_cols[2].metric("平均饱和度", _format_number(summary.get("average_saturation")))
-    metric_cols[3].metric("平均亮度", _format_number(summary.get("average_value")))
+    metric_cols[1].metric("平均色相（度）", _format_number(summary.get("average_hue")))
+    metric_cols[2].metric("平均饱和度（%）", _format_number(summary.get("average_saturation")))
+    metric_cols[3].metric("平均亮度（%）", _format_number(summary.get("average_value")))
 
     detail_cols = st.columns(3)
-    detail_cols[0].metric("平均色彩离散度", _format_number(summary.get("average_color_dispersion")))
-    detail_cols[1].metric("平均对比度", _format_number(summary.get("average_contrast")))
-    detail_cols[2].metric("平均冷暖倾向", _format_number(summary.get("average_warmth")))
+    detail_cols[0].metric("平均色彩离散度（%）", _format_number(summary.get("average_color_dispersion")))
+    detail_cols[1].metric("平均对比度（%）", _format_number(summary.get("average_contrast")))
+    detail_cols[2].metric("平均冷暖倾向（-100 到 100）", _format_number(summary.get("average_warmth")))
+    st.caption(COLOR_METRIC_HELP["color_dispersion"])
+    st.caption(COLOR_METRIC_HELP["brightness_dispersion"])
+    st.caption(COLOR_METRIC_HELP["warmth_score"])
 
     frame = pd.DataFrame(samples).sort_values("frame_index")
-    render_line_chart(frame, "HSV 主色趋势", ["dominant_hue", "dominant_saturation", "dominant_value"])
-    render_line_chart(frame, "色彩离散度趋势", ["color_dispersion"])
-    render_line_chart(frame, "亮度 / 对比度趋势", ["brightness_dispersion", "contrast_score"])
-    render_line_chart(frame, "冷暖倾向趋势", ["warmth_score"])
+    render_line_chart(frame, "主色色相趋势", ["dominant_hue"], COLOR_METRIC_HELP["hsv"])
+    render_line_chart(frame, "主色饱和度 / 亮度趋势", ["dominant_saturation", "dominant_value"])
+    render_line_chart(frame, "色彩离散度趋势", ["color_dispersion"], COLOR_METRIC_HELP["color_dispersion"])
+    render_line_chart(
+        frame,
+        "亮度 / 对比度趋势",
+        ["brightness_dispersion", "contrast_score"],
+        f"{COLOR_METRIC_HELP['brightness_dispersion']} {COLOR_METRIC_HELP['contrast_score']}",
+    )
+    render_line_chart(frame, "冷暖倾向趋势", ["warmth_score"], COLOR_METRIC_HELP["warmth_score"])
 
     with st.expander("采样数据", expanded=False):
         columns = [
@@ -234,24 +270,40 @@ def render_color_analysis(module: dict) -> None:
             "dominant_coverage",
         ]
         visible_columns = [column for column in columns if column in frame.columns]
-        st.dataframe(frame[visible_columns], width="stretch", hide_index=True)
+        st.dataframe(
+            frame[visible_columns],
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "dominant_hue": st.column_config.NumberColumn("H 色相（度）", format="%.2f"),
+                "dominant_saturation": st.column_config.NumberColumn("S 饱和度（%）", format="%.2f"),
+                "dominant_value": st.column_config.NumberColumn("V 亮度（%）", format="%.2f"),
+                "color_dispersion": st.column_config.NumberColumn("色彩离散度（%）", format="%.2f"),
+                "brightness_dispersion": st.column_config.NumberColumn("亮度离散度（%）", format="%.2f"),
+                "contrast_score": st.column_config.NumberColumn("对比度（%）", format="%.2f"),
+                "warmth_score": st.column_config.NumberColumn("冷暖倾向（-100 到 100）", format="%.2f"),
+                "dominant_coverage": st.column_config.NumberColumn("主色覆盖率", format="%.3f"),
+            },
+        )
 
 
-def render_line_chart(frame: pd.DataFrame, title: str, columns: list[str]) -> None:
+def render_line_chart(frame: pd.DataFrame, title: str, columns: list[str], help_text: str = "") -> None:
     labels = {
-        "dominant_hue": "H 色相",
-        "dominant_saturation": "S 饱和度",
-        "dominant_value": "V 亮度",
-        "color_dispersion": "色彩离散度",
-        "brightness_dispersion": "亮度离散度",
-        "contrast_score": "对比度",
-        "warmth_score": "冷暖倾向",
+        "dominant_hue": "H 色相（度）",
+        "dominant_saturation": "S 饱和度（%）",
+        "dominant_value": "V 亮度（%）",
+        "color_dispersion": "色彩离散度（%）",
+        "brightness_dispersion": "亮度离散度（%）",
+        "contrast_score": "对比度（%）",
+        "warmth_score": "冷暖倾向（-100 到 100）",
     }
     visible_columns = [column for column in columns if column in frame.columns]
     if not visible_columns:
         return
 
     st.subheader(title)
+    if help_text:
+        st.caption(help_text)
     chart_frame = frame[["frame_index", *visible_columns]].rename(columns={"frame_index": "帧", **labels})
     st.line_chart(chart_frame, x="帧", y=[labels[column] for column in visible_columns], height=280)
 
@@ -291,7 +343,7 @@ def render_event_review_list(events: list[dict], report_dir: Path) -> None:
     review_events = [event for event in events if event.get("screenshots")]
     if not review_events:
         if events:
-            st.info("当前筛选结果没有截图记录。请确认本次分析勾选了“保存异常截图”，或重新分析生成截图。")
+            st.info("当前筛选结果没有截图记录。请重新分析生成截图。")
         return
 
     st.subheader("截图复核")
@@ -331,7 +383,7 @@ def render_screenshots(event: dict, report_dir: Path) -> None:
         if event.get("type") == "metadata_warning":
             st.info("基础信息提示没有对应截图。请在上方选择具体异常事件查看截图。")
         else:
-            st.info("该事件没有截图记录。请确认分析时勾选了“保存异常截图”。")
+            st.info("该事件没有截图记录。请重新分析生成截图。")
         return
 
     image_items = []
@@ -350,40 +402,34 @@ def render_screenshots(event: dict, report_dir: Path) -> None:
         col.image(str(path), caption=label_map.get(label, label), width="stretch")
 
 
-def render_debug_info(events: list[dict], report_dir: Path, *, expanded: bool) -> None:
-    if not expanded:
-        return
-
-    with st.expander("调试信息", expanded=True):
-        with_screenshot_fields = [event for event in events if event.get("screenshots")]
-        resolved_files = []
-        missing_files = []
-        for event in with_screenshot_fields:
-            for label, screenshot_path in event.get("screenshots", {}).items():
-                resolved = _resolve_screenshot_path(report_dir, screenshot_path)
-                item = {
-                    "事件": event_type_label(event.get("type", "")),
-                    "帧": _frame_range(event),
-                    "截图": label,
-                    "路径": str(resolved),
-                }
-                if resolved.exists():
-                    resolved_files.append(item)
-                else:
-                    missing_files.append(item)
-
-        st.write(
-            {
-                "报告目录": str(report_dir.resolve()),
-                "筛选后事件数": len(events),
-                "带截图字段的事件数": len(with_screenshot_fields),
-                "已找到截图文件数": len(resolved_files),
-                "缺失截图文件数": len(missing_files),
+def log_debug_info(events: list[dict], report_dir: Path) -> None:
+    with_screenshot_fields = [event for event in events if event.get("screenshots")]
+    resolved_files = []
+    missing_files = []
+    for event in with_screenshot_fields:
+        for label, screenshot_path in event.get("screenshots", {}).items():
+            resolved = _resolve_screenshot_path(report_dir, screenshot_path)
+            item = {
+                "event": event_type_label(event.get("type", "")),
+                "frames": _frame_range(event),
+                "screenshot": label,
+                "path": str(resolved),
             }
-        )
-        if missing_files:
-            st.write("缺失截图文件示例")
-            st.dataframe(pd.DataFrame(missing_files[:20]), width="stretch", hide_index=True)
+            if resolved.exists():
+                resolved_files.append(item)
+            else:
+                missing_files.append(item)
+
+    LOGGER.info(
+        "report_debug report_dir=%s filtered_events=%s events_with_screenshots=%s resolved_screenshots=%s missing_screenshots=%s",
+        report_dir.resolve(),
+        len(events),
+        len(with_screenshot_fields),
+        len(resolved_files),
+        len(missing_files),
+    )
+    if missing_files:
+        LOGGER.warning("missing_screenshot_examples=%s", missing_files[:20])
 
 
 def load_report_file(report_path: Path) -> None:
@@ -477,6 +523,10 @@ def _format_number(value) -> str:
 
 
 def choose_video_file() -> str:
+    if not is_native_file_dialog_available():
+        return ""
+    from tkinter import Tk, filedialog
+
     root = Tk()
     root.withdraw()
     root.attributes("-topmost", True)
@@ -494,6 +544,10 @@ def choose_video_file() -> str:
 
 
 def choose_report_file() -> str:
+    if not is_native_file_dialog_available():
+        return ""
+    from tkinter import Tk, filedialog
+
     root = Tk()
     root.withdraw()
     root.attributes("-topmost", True)
@@ -510,6 +564,21 @@ def choose_report_file() -> str:
         return str(path) if path else ""
     finally:
         root.destroy()
+
+
+def is_native_file_dialog_available() -> bool:
+    return platform.system() != "Darwin"
+
+
+def save_uploaded_file(uploaded_file, upload_dir: Path) -> Path:
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    original_name = Path(uploaded_file.name)
+    filename = f"{safe_path_name(original_name.stem)}{original_name.suffix.lower()}"
+    target = upload_dir / filename
+    uploaded_file.seek(0)
+    with target.open("wb") as output:
+        shutil.copyfileobj(uploaded_file, output)
+    return target.resolve()
 
 
 def default_output_dir(video_path: str) -> str:

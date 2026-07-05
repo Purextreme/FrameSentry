@@ -25,12 +25,11 @@ def analysis_options(
     *,
     sample_scale: int,
     max_outlier_frames: int,
-    save_screenshots: bool,
 ) -> dict:
     return {
         "sample_scale": int(sample_scale),
         "max_outlier_frames": int(max_outlier_frames),
-        "save_screenshots": bool(save_screenshots),
+        "save_screenshots": True,
     }
 
 
@@ -41,7 +40,6 @@ def scan_video(
     sample_scale: int = 480,
     max_outlier_frames: int = 2,
     fps_normal: str | set[float] = "25,30,50,60",
-    save_screenshots: bool = False,
     use_cache: bool = True,
     cache_root: str | Path = "output",
 ) -> dict:
@@ -68,13 +66,12 @@ def scan_video(
             "fps_normal": fps_values,
             "sample_scale": sample_scale,
             "max_outlier_frames": max_outlier_frames,
-            "save_screenshots": save_screenshots,
+            "save_screenshots": True,
             "color_sample_limit": DEFAULT_COLOR_SAMPLE_LIMIT,
             "source_file": video_fingerprint(video_path),
             "analysis_options": analysis_options(
                 sample_scale=sample_scale,
                 max_outlier_frames=max_outlier_frames,
-                save_screenshots=save_screenshots,
             ),
         },
         artifact_dir=report_dir,

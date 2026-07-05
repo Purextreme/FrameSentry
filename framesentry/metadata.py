@@ -10,6 +10,7 @@ COMMON_LANDSCAPE = {(1920, 1080), (3840, 2160), (2560, 1440), (1280, 720)}
 COMMON_PORTRAIT = {(1080, 1920), (2160, 3840)}
 COMMON_NON_INTEGER_FPS = (29.97, 59.94)
 UNCOMMON_AD_FPS = (23.976, 24.0)
+MP4_CONTAINER_BOXES = {b"moov", b"trak", b"mdia", b"minf", b"stbl", b"edts", b"udta", b"meta"}
 
 
 @dataclass(frozen=True)
@@ -99,10 +100,61 @@ def _read_metadata_opencv(path: Path) -> VideoMetadata:
         duration=duration,
         codec=None,
         frame_count=frame_count or None,
-        audio_stream_exists=False,
+        audio_stream_exists=_mp4_audio_stream_exists(path),
     )
     capture.release()
     return metadata
+
+
+def _mp4_audio_stream_exists(path: Path) -> bool:
+    if path.suffix.lower() not in {".mp4", ".m4v", ".mov"}:
+        return False
+    try:
+        with path.open("rb") as video_file:
+            return _mp4_boxes_include_audio_handler(video_file, path.stat().st_size)
+    except OSError:
+        return False
+
+
+def _mp4_boxes_include_audio_handler(video_file, end_offset: int) -> bool:
+    position = video_file.tell()
+    while position + 8 <= end_offset:
+        video_file.seek(position)
+        header = video_file.read(8)
+        if len(header) < 8:
+            return False
+
+        size = int.from_bytes(header[:4], "big")
+        box_type = header[4:8]
+        header_size = 8
+        if size == 1:
+            extended_size = video_file.read(8)
+            if len(extended_size) < 8:
+                return False
+            size = int.from_bytes(extended_size, "big")
+            header_size = 16
+        elif size == 0:
+            size = end_offset - position
+
+        box_end = position + size
+        content_start = position + header_size
+        if size < header_size or box_end > end_offset:
+            return False
+
+        if box_type == b"hdlr":
+            video_file.seek(content_start)
+            handler_header = video_file.read(12)
+            if len(handler_header) >= 12 and handler_header[8:12] == b"soun":
+                return True
+
+        if box_type in MP4_CONTAINER_BOXES:
+            child_start = content_start + (4 if box_type == b"meta" else 0)
+            video_file.seek(child_start)
+            if _mp4_boxes_include_audio_handler(video_file, box_end):
+                return True
+
+        position = box_end
+    return False
 
 
 def inspect_metadata(metadata: VideoMetadata, fps_normal: set[float]) -> list[dict]:

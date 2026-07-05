@@ -56,6 +56,10 @@ class ColorAnalysisTests(unittest.TestCase):
         self.assertEqual(len(result.events), 0)
         self.assertLessEqual(result.data["sample_count"], 3)
         self.assertIn("hsv_trend", [chart["chart_id"] for chart in result.charts])
+        hsv_chart = next(chart for chart in result.charts if chart["chart_id"] == "hsv_trend")
+        self.assertIn("description", hsv_chart)
+        self.assertEqual(hsv_chart["series"][0]["unit"], "degree")
+        self.assertEqual(hsv_chart["series"][1]["unit"], "percent")
         json.dumps(payload)
 
 

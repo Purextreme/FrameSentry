@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+REPORT_CACHE_SCHEMA_VERSION = 2
+
+
 @dataclass
 class CachedReport:
     report_path: Path
@@ -18,6 +21,7 @@ def video_fingerprint(path: str | Path) -> dict:
         "path": str(video_path),
         "size_bytes": stat.st_size,
         "modified_ns": stat.st_mtime_ns,
+        "schema_version": REPORT_CACHE_SCHEMA_VERSION,
     }
 
 
@@ -55,5 +59,7 @@ def is_same_video_report(report: dict, fingerprint: dict) -> bool:
     if cached_fingerprint.get("size_bytes") != fingerprint["size_bytes"]:
         return False
     if cached_fingerprint.get("modified_ns") != fingerprint["modified_ns"]:
+        return False
+    if cached_fingerprint.get("schema_version") != fingerprint["schema_version"]:
         return False
     return True

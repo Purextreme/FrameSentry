@@ -209,32 +209,36 @@ def _build_charts() -> list[dict[str, Any]]:
         {
             "chart_id": "hsv_trend",
             "title": "HSV 主色趋势",
+            "description": "H 色相单位为度，范围 0-360；S 饱和度和 V 亮度单位为百分比，范围 0-100%。",
             "x_field": "frame_index",
             "series": [
-                {"field": "dominant_hue", "label": "H 色相"},
-                {"field": "dominant_saturation", "label": "S 饱和度"},
-                {"field": "dominant_value", "label": "V 亮度"},
+                {"field": "dominant_hue", "label": "H 色相", "unit": "degree", "range": [0, 360]},
+                {"field": "dominant_saturation", "label": "S 饱和度", "unit": "percent", "range": [0, 100]},
+                {"field": "dominant_value", "label": "V 亮度", "unit": "percent", "range": [0, 100]},
             ],
         },
         {
             "chart_id": "color_dispersion",
             "title": "色彩离散度趋势",
+            "description": "B/G/R 三个颜色通道标准差的平均值，并归一化为 0-100%。数值越高，画面颜色分布越分散。",
             "x_field": "frame_index",
-            "series": [{"field": "color_dispersion", "label": "色彩离散度"}],
+            "series": [{"field": "color_dispersion", "label": "色彩离散度", "unit": "percent", "range": [0, 100]}],
         },
         {
             "chart_id": "brightness_contrast",
             "title": "亮度 / 对比度趋势",
+            "description": "亮度离散度是灰度亮度标准差；对比度是灰度亮度第 95 百分位与第 5 百分位的差值。两者都归一化为 0-100%。",
             "x_field": "frame_index",
             "series": [
-                {"field": "brightness_dispersion", "label": "亮度离散度"},
-                {"field": "contrast_score", "label": "对比度"},
+                {"field": "brightness_dispersion", "label": "亮度离散度", "unit": "percent", "range": [0, 100]},
+                {"field": "contrast_score", "label": "对比度", "unit": "percent", "range": [0, 100]},
             ],
         },
         {
             "chart_id": "warmth",
             "title": "冷暖倾向趋势",
+            "description": "平均红色通道减平均蓝色通道，并归一化到 -100 到 100；正值偏暖，负值偏冷，接近 0 更中性。",
             "x_field": "frame_index",
-            "series": [{"field": "warmth_score", "label": "冷暖倾向"}],
+            "series": [{"field": "warmth_score", "label": "冷暖倾向", "unit": "score", "range": [-100, 100]}],
         },
     ]

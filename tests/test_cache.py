@@ -26,7 +26,7 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(hit.report_path, report_path)
         self.assertEqual(
             hit.report["modules"]["frame_issues"]["data"]["analysis_options"],
-            analysis_options(sample_scale=480, max_outlier_frames=2, save_screenshots=True),
+            analysis_options(sample_scale=480, max_outlier_frames=2),
         )
 
     def test_report_cache_misses_when_video_changes(self) -> None:
@@ -37,6 +37,18 @@ class CacheTests(unittest.TestCase):
             report_path = root / "output" / "reports" / "clip_001" / "report.json"
             write_report(report_path, video)
             video.write_bytes(b"changed video")
+
+            hit = ReportCacheManager(root / "output").find(video)
+
+        self.assertIsNone(hit)
+
+    def test_report_cache_misses_legacy_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            video = root / "clip.mp4"
+            video.write_bytes(b"video")
+            report_path = root / "output" / "reports" / "clip_001" / "report.json"
+            write_report(report_path, video, legacy_schema=True)
 
             hit = ReportCacheManager(root / "output").find(video)
 
@@ -121,11 +133,15 @@ def write_report(
     *,
     sample_scale: int = 480,
     include_frame_issues: bool = True,
+    legacy_schema: bool = False,
 ) -> None:
+    source_file = video_fingerprint(video)
+    if legacy_schema:
+        source_file.pop("schema_version")
     modules = {
         "metadata": {
             "data": {
-                "source_file": video_fingerprint(video),
+                "source_file": source_file,
             },
             "events": [],
         },
@@ -136,7 +152,6 @@ def write_report(
                 "analysis_options": analysis_options(
                     sample_scale=sample_scale,
                     max_outlier_frames=2,
-                    save_screenshots=True,
                 ),
             },
             "events": [],

@@ -52,7 +52,7 @@ class AnalysisCoreTests(unittest.TestCase):
             video_id="input",
             settings={
                 "source_file": {"path": "input.mp4"},
-                "analysis_options": {"sample_scale": 480, "max_outlier_frames": 2, "save_screenshots": False},
+                "analysis_options": {"sample_scale": 480, "max_outlier_frames": 2, "save_screenshots": True},
             },
         )
         modules = {
@@ -78,7 +78,7 @@ class AnalysisCoreTests(unittest.TestCase):
         self.assertEqual(report["modules"]["metadata"]["data"]["source_file"], {"path": "input.mp4"})
         self.assertEqual(
             report["modules"]["frame_issues"]["data"]["analysis_options"],
-            {"sample_scale": 480, "max_outlier_frames": 2, "save_screenshots": False},
+            {"sample_scale": 480, "max_outlier_frames": 2, "save_screenshots": True},
         )
         self.assertNotIn("events", report)
         self.assertNotIn("thresholds", report)
@@ -106,7 +106,7 @@ class AnalyzerReturnTests(unittest.TestCase):
             video_path="sample.mp4",
             output_dir="report",
             video_id="sample",
-            settings={"sample_scale": 160, "max_outlier_frames": 2, "save_screenshots": False},
+            settings={"sample_scale": 160, "max_outlier_frames": 2},
             metadata=FakeMetadata(),
         )
         with patch("framesentry.analyzers.frame_issues.read_frame_metrics", return_value=fake_frame_metrics()):
@@ -121,7 +121,7 @@ class AnalyzerReturnTests(unittest.TestCase):
             video_path="sample.mp4",
             output_dir="report",
             video_id="sample",
-            settings={"sample_scale": 160, "max_outlier_frames": 2, "save_screenshots": False},
+            settings={"sample_scale": 160, "max_outlier_frames": 2},
             metadata=FakeMetadata(),
         )
         with (
@@ -130,6 +130,7 @@ class AnalyzerReturnTests(unittest.TestCase):
             patch("framesentry.analyzers.frame_issues.detect_blank_frames", return_value=[]),
             patch("framesentry.analyzers.frame_issues.detect_transient_outliers", return_value=[]),
             patch("framesentry.analyzers.frame_issues.detect_duplicate_frames", return_value=duplicate_events_for_pattern()),
+            patch("framesentry.analyzers.frame_issues.save_event_screenshots"),
         ):
             result = FrameIssueAnalyzer().run(context)
 
@@ -179,7 +180,7 @@ class StreamlitReportTests(unittest.TestCase):
             patch.object(app, "st") as streamlit,
             patch.object(app, "render_event_table"),
             patch.object(app, "render_event_review_list"),
-            patch.object(app, "render_debug_info"),
+            patch.object(app, "log_debug_info"),
         ):
             streamlit.session_state = {}
             streamlit.columns.side_effect = lambda spec: [MagicMock() for _ in range(spec if isinstance(spec, int) else len(spec))]
@@ -188,7 +189,7 @@ class StreamlitReportTests(unittest.TestCase):
             streamlit.selectbox.return_value = "全部异常"
             streamlit.expander.return_value.__enter__.return_value = MagicMock()
 
-            app.render_report(report, Path("."), show_debug=False)
+            app.render_report(report, Path("."))
 
 
 class FailingAnalyzer(BaseAnalyzer):
