@@ -175,7 +175,7 @@ def _metadata_to_report(context: VideoContext) -> dict[str, Any]:
 
 def _json_safe(value: Any) -> Any:
     if isinstance(value, Path):
-        return str(value)
+        return value.as_posix()
     if isinstance(value, dict):
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, list):

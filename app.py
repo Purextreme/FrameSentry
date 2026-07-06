@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
-import platform
-import shutil
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -40,27 +40,13 @@ def main() -> None:
 
     with st.sidebar:
         st.header("分析设置")
-        native_file_dialog_available = is_native_file_dialog_available()
         if "video_path" not in st.session_state:
             st.session_state["video_path"] = ""
-        if st.button("选择视频文件", width="stretch", disabled=not native_file_dialog_available):
+        if st.button("选择视频文件", width="stretch"):
             selected_path = choose_video_file()
             if selected_path:
                 st.session_state["video_path"] = selected_path
                 st.session_state["output_dir"] = default_output_dir(selected_path)
-        if not native_file_dialog_available:
-            st.caption("macOS 测试时请直接粘贴文件路径。")
-        uploaded_video = st.file_uploader(
-            "上传视频文件",
-            type=["mp4", "mov", "m4v", "avi", "mkv"],
-            key="video_upload",
-        )
-        if uploaded_video is not None:
-            uploaded_path = save_uploaded_file(uploaded_video, Path("output") / "uploads" / "videos")
-            uploaded_path_str = str(uploaded_path)
-            if st.session_state["video_path"] != uploaded_path_str:
-                st.session_state["video_path"] = uploaded_path_str
-                st.session_state["output_dir"] = default_output_dir(uploaded_path_str)
         video_path = st.text_input("视频文件路径", key="video_path")
         if "output_dir" not in st.session_state:
             st.session_state["output_dir"] = "output/reports"
@@ -74,14 +60,10 @@ def main() -> None:
         st.header("打开已有报告")
         if "existing_report" not in st.session_state:
             st.session_state["existing_report"] = ""
-        if st.button("选择 report.json", width="stretch", disabled=not native_file_dialog_available):
+        if st.button("选择 report.json", width="stretch"):
             selected_report = choose_report_file()
             if selected_report:
                 st.session_state["existing_report"] = selected_report
-        uploaded_report = st.file_uploader("上传 report.json", type=["json"], key="report_upload")
-        if uploaded_report is not None:
-            uploaded_report_path = save_uploaded_file(uploaded_report, Path("output") / "uploads" / "reports")
-            st.session_state["existing_report"] = str(uploaded_report_path)
         existing_report = st.text_input("report.json 路径", key="existing_report")
         load_report = st.button("读取报告", width="stretch")
 
@@ -148,7 +130,7 @@ def render_report(report: dict, report_dir: Path) -> None:
         st.info(cache_message)
 
     overview_tab, metadata_tab, frame_tab, color_tab = st.tabs(
-        ["Overview", "Metadata", "Frame Issues", "Color Analysis"]
+        ["总览 Overview", "元数据 Metadata", "画面异常 Frame Issues", "色彩分析 Color Analysis"]
     )
 
     with overview_tab:
@@ -161,6 +143,7 @@ def render_report(report: dict, report_dir: Path) -> None:
         if metadata_module:
             st.caption(_module_status_text(metadata_module))
         render_module_errors(metadata_module)
+        render_metadata_details(video)
         if metadata_events:
             render_event_table(metadata_events)
         else:
@@ -244,16 +227,30 @@ def render_color_analysis(module: dict) -> None:
     st.caption(COLOR_METRIC_HELP["warmth_score"])
 
     frame = pd.DataFrame(samples).sort_values("frame_index")
-    render_line_chart(frame, "主色色相趋势", ["dominant_hue"], COLOR_METRIC_HELP["hsv"])
-    render_line_chart(frame, "主色饱和度 / 亮度趋势", ["dominant_saturation", "dominant_value"])
-    render_line_chart(frame, "色彩离散度趋势", ["color_dispersion"], COLOR_METRIC_HELP["color_dispersion"])
-    render_line_chart(
+    render_hue_chart(frame)
+    render_single_metric_chart(
         frame,
-        "亮度 / 对比度趋势",
-        ["brightness_dispersion", "contrast_score"],
-        f"{COLOR_METRIC_HELP['brightness_dispersion']} {COLOR_METRIC_HELP['contrast_score']}",
+        "主色饱和度趋势",
+        "dominant_saturation",
+        "S 饱和度（%）",
+        [0, 100],
+        COLOR_METRIC_HELP["hsv"],
+        "#8a8a8a",
+        "#1f77ff",
     )
-    render_line_chart(frame, "冷暖倾向趋势", ["warmth_score"], COLOR_METRIC_HELP["warmth_score"])
+    render_single_metric_chart(
+        frame,
+        "主色亮度趋势",
+        "dominant_value",
+        "V 亮度（%）",
+        [0, 100],
+        COLOR_METRIC_HELP["hsv"],
+        "#111111",
+        "#f2f2f2",
+    )
+    render_warmth_chart(frame)
+    render_contrast_chart(frame)
+    render_dispersion_chart(frame)
 
     with st.expander("采样数据", expanded=False):
         columns = [
@@ -287,25 +284,248 @@ def render_color_analysis(module: dict) -> None:
         )
 
 
-def render_line_chart(frame: pd.DataFrame, title: str, columns: list[str], help_text: str = "") -> None:
-    labels = {
-        "dominant_hue": "H 色相（度）",
-        "dominant_saturation": "S 饱和度（%）",
-        "dominant_value": "V 亮度（%）",
-        "color_dispersion": "色彩离散度（%）",
-        "brightness_dispersion": "亮度离散度（%）",
-        "contrast_score": "对比度（%）",
-        "warmth_score": "冷暖倾向（-100 到 100）",
-    }
-    visible_columns = [column for column in columns if column in frame.columns]
-    if not visible_columns:
+def render_metadata_details(video: dict) -> None:
+    if not video:
+        st.info("当前报告没有视频基础信息。")
+        return
+
+    st.subheader("视频基础信息")
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("分辨率", f"{video.get('width')} x {video.get('height')}")
+    metric_cols[1].metric("帧率", video.get("fps"))
+    metric_cols[2].metric("时长（秒）", _format_number(video.get("duration")))
+    metric_cols[3].metric("总帧数", video.get("frame_count", ""))
+
+    detail_cols = st.columns(2)
+    detail_cols[0].metric("编码", video.get("codec") or "未知")
+    detail_cols[1].metric("音轨", _audio_stream_text(video.get("audio_stream_exists")))
+    if video.get("path"):
+        st.caption(f"文件路径：{video.get('path')}")
+
+
+def render_hue_chart(frame: pd.DataFrame) -> None:
+    if "dominant_hue" not in frame.columns:
+        return
+
+    st.subheader("主色色相趋势")
+    st.caption(COLOR_METRIC_HELP["hsv"])
+    tooltips = _chart_tooltips("dominant_hue", "H 色相（度）")
+    base = alt.Chart(frame).encode(
+        x=alt.X("frame_index:Q", title="帧"),
+        y=alt.Y("dominant_hue:Q", title="H 色相（度）", scale=alt.Scale(domain=[0, 360])),
+    )
+    line = base.mark_line(color="#56616f", opacity=0.65).encode(tooltip=tooltips)
+    points = base.mark_circle(size=52, stroke="#333333", strokeWidth=0.4).encode(
+        color=alt.Color(
+            "dominant_hue:Q",
+            title="色相 H（度）",
+            scale=alt.Scale(
+                domain=[0, 60, 120, 180, 240, 300, 360],
+                range=["#ff3b30", "#ffcc00", "#34c759", "#32ade6", "#007aff", "#af52de", "#ff3b30"],
+            ),
+            legend=None,
+        ),
+        tooltip=tooltips,
+    )
+    render_chart_with_color_axis(
+        (line + points).properties(height=280),
+        "色相 H（度）",
+        [0, 60, 120, 180, 240, 300, 360],
+        ["#ff3b30", "#ffcc00", "#34c759", "#32ade6", "#007aff", "#af52de", "#ff3b30"],
+        [0, 60, 120, 180, 240, 300, 360],
+    )
+
+
+def render_single_metric_chart(
+    frame: pd.DataFrame,
+    title: str,
+    column: str,
+    label: str,
+    domain: list[int],
+    help_text: str,
+    low_color: str,
+    high_color: str,
+) -> None:
+    if column not in frame.columns:
         return
 
     st.subheader(title)
     if help_text:
         st.caption(help_text)
-    chart_frame = frame[["frame_index", *visible_columns]].rename(columns={"frame_index": "帧", **labels})
-    st.line_chart(chart_frame, x="帧", y=[labels[column] for column in visible_columns], height=280)
+    tooltips = _chart_tooltips(column, label)
+    base = alt.Chart(frame).encode(
+        x=alt.X("frame_index:Q", title="帧"),
+        y=alt.Y(f"{column}:Q", title=label, scale=alt.Scale(domain=domain)),
+    )
+    line = base.mark_line(color="#4c78a8").encode(tooltip=tooltips)
+    points = base.mark_circle(size=46, stroke="#333333", strokeWidth=0.35).encode(
+        color=alt.Color(
+            f"{column}:Q",
+            title=label,
+            scale=alt.Scale(domain=domain, range=[low_color, high_color]),
+            legend=None,
+        ),
+        tooltip=tooltips,
+    )
+    render_chart_with_color_axis(
+        (line + points).properties(height=280),
+        label,
+        domain,
+        [low_color, high_color],
+        [domain[0], (domain[0] + domain[1]) / 2, domain[1]],
+    )
+
+
+def render_dispersion_chart(frame: pd.DataFrame) -> None:
+    columns = [column for column in ["color_dispersion", "brightness_dispersion"] if column in frame.columns]
+    if not columns:
+        return
+
+    st.subheader("离散度趋势")
+    st.caption(f"{COLOR_METRIC_HELP['color_dispersion']} {COLOR_METRIC_HELP['brightness_dispersion']}")
+    labels = {
+        "color_dispersion": "色彩离散度（%）",
+        "brightness_dispersion": "亮度离散度（%）",
+    }
+    chart_frame = frame[["frame_index", *columns]].melt(
+        id_vars=["frame_index"],
+        value_vars=columns,
+        var_name="metric",
+        value_name="value",
+    )
+    chart_frame["metric_label"] = chart_frame["metric"].map(labels)
+    chart = (
+        alt.Chart(chart_frame)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("frame_index:Q", title="帧"),
+            y=alt.Y("value:Q", title="离散度（%）", scale=alt.Scale(domain=[0, 100])),
+            color=alt.Color("metric_label:N", title="指标"),
+            tooltip=[
+                alt.Tooltip("frame_index:Q", title="帧"),
+                alt.Tooltip("metric_label:N", title="指标"),
+                alt.Tooltip("value:Q", title="数值", format=".2f"),
+            ],
+        )
+        .properties(height=280)
+    )
+    st.altair_chart(chart, width="stretch")
+
+
+def render_contrast_chart(frame: pd.DataFrame) -> None:
+    if "contrast_score" not in frame.columns:
+        return
+
+    st.subheader("对比度趋势")
+    st.caption(COLOR_METRIC_HELP["contrast_score"])
+    tooltips = _chart_tooltips("contrast_score", "对比度（%）")
+    base = alt.Chart(frame).encode(
+        x=alt.X("frame_index:Q", title="帧"),
+        y=alt.Y("contrast_score:Q", title="对比度（%）", scale=alt.Scale(domain=[0, 100])),
+    )
+    line = base.mark_line(color="#4c78a8").encode(tooltip=tooltips)
+    points = base.mark_circle(size=46, color="#4c78a8", stroke="#333333", strokeWidth=0.35).encode(
+        tooltip=tooltips,
+    )
+    st.altair_chart((line + points).properties(height=280), width="stretch")
+
+
+def render_warmth_chart(frame: pd.DataFrame) -> None:
+    if "warmth_score" not in frame.columns:
+        return
+
+    st.subheader("冷暖倾向趋势")
+    st.caption(COLOR_METRIC_HELP["warmth_score"])
+    tooltips = _chart_tooltips("warmth_score", "冷暖倾向")
+    base = alt.Chart(frame).encode(
+        x=alt.X("frame_index:Q", title="帧"),
+        y=alt.Y("warmth_score:Q", title="冷暖倾向（-100 到 100）", scale=alt.Scale(domain=[-100, 100])),
+    )
+    line = base.mark_line(color="#d95f02").encode(tooltip=tooltips)
+    points = base.mark_circle(size=44, stroke="#333333", strokeWidth=0.35).encode(
+        color=alt.Color(
+            "warmth_score:Q",
+            title="冷暖倾向",
+            scale=alt.Scale(domain=[-100, 0, 100], range=["#2f80ed", "#d9d9d9", "#f2994a"]),
+            legend=None,
+        ),
+        tooltip=tooltips,
+    )
+    zero_rule = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#555555", strokeDash=[4, 4]).encode(y="y:Q")
+    render_chart_with_color_axis(
+        (line + points + zero_rule).properties(height=280),
+        "冷暖倾向",
+        [-100, 0, 100],
+        ["#2f80ed", "#d9d9d9", "#f2994a"],
+        [-100, -50, 0, 50, 100],
+    )
+
+
+def render_chart_with_color_axis(
+    chart: alt.Chart,
+    title: str,
+    color_domain: list[float],
+    color_range: list[str],
+    axis_values: list[float],
+) -> None:
+    chart_col, axis_col = st.columns([1, 0.075], gap="small")
+    with chart_col:
+        st.altair_chart(chart, width="stretch")
+    with axis_col:
+        st.markdown(
+            continuous_color_axis_html(title, color_domain, color_range, axis_values),
+            unsafe_allow_html=True,
+        )
+
+
+def continuous_color_axis_html(
+    title: str,
+    color_domain: list[float],
+    color_range: list[str],
+    axis_values: list[float],
+) -> str:
+    start = min(color_domain)
+    end = max(color_domain)
+    gradient_stops = ", ".join(
+        f"{color} {((value - start) / (end - start)) * 100:.2f}%"
+        for value, color in zip(color_domain, color_range)
+    )
+
+    tick_html = []
+    for value in axis_values:
+        top = 100 - ((value - start) / (end - start)) * 100
+        tick_html.append(
+            f'<div class="color-axis-tick" style="top:{top:.2f}%;">'
+            f'<span class="color-axis-line"></span><span class="color-axis-label">{value:g}</span></div>'
+        )
+
+    return (
+        '<div class="color-axis-wrapper">'
+        '<div class="color-axis-track-row">'
+        f'<div class="color-axis-track" style="background:linear-gradient(to top, {gradient_stops});"></div>'
+        '<div class="color-axis-ticks">'
+        f'{"".join(tick_html)}'
+        "</div>"
+        "</div>"
+        f'<div class="color-axis-title">{escape(title)}</div>'
+        "</div>"
+        "<style>"
+        ".color-axis-wrapper{height:330px;min-width:74px;padding-top:0;box-sizing:border-box;}"
+        ".color-axis-track-row{position:relative;height:205px;width:74px;overflow:visible;}"
+        ".color-axis-track{position:absolute;left:0;top:0;width:32px;height:205px;border-radius:2px;}"
+        ".color-axis-ticks{position:absolute;left:38px;top:0;height:205px;width:36px;overflow:visible;}"
+        ".color-axis-tick{position:absolute;left:0;display:flex;align-items:center;gap:4px;transform:translateY(-50%);}"
+        ".color-axis-line{width:5px;height:1px;background:rgba(240,242,246,.55);display:inline-block;}"
+        ".color-axis-label{color:#f0f2f6;font-size:13px;line-height:1;white-space:nowrap;}"
+        ".color-axis-title{width:74px;margin-top:8px;padding-bottom:18px;color:#f0f2f6;font-size:13px;font-weight:700;line-height:1.2;text-align:center;}"
+        "</style>"
+    )
+
+
+def _chart_tooltips(column: str, label: str) -> list:
+    tooltips = [alt.Tooltip("frame_index:Q", title="帧")]
+    tooltips.append(alt.Tooltip(f"{column}:Q", title=label, format=".2f"))
+    return tooltips
 
 
 def render_event_table(events: list[dict]) -> None:
@@ -522,9 +742,15 @@ def _format_number(value) -> str:
     return str(value)
 
 
+def _audio_stream_text(value) -> str:
+    if value is True:
+        return "有"
+    if value is False:
+        return "无"
+    return "未知"
+
+
 def choose_video_file() -> str:
-    if not is_native_file_dialog_available():
-        return ""
     from tkinter import Tk, filedialog
 
     root = Tk()
@@ -544,8 +770,6 @@ def choose_video_file() -> str:
 
 
 def choose_report_file() -> str:
-    if not is_native_file_dialog_available():
-        return ""
     from tkinter import Tk, filedialog
 
     root = Tk()
@@ -564,21 +788,6 @@ def choose_report_file() -> str:
         return str(path) if path else ""
     finally:
         root.destroy()
-
-
-def is_native_file_dialog_available() -> bool:
-    return platform.system() != "Darwin"
-
-
-def save_uploaded_file(uploaded_file, upload_dir: Path) -> Path:
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    original_name = Path(uploaded_file.name)
-    filename = f"{safe_path_name(original_name.stem)}{original_name.suffix.lower()}"
-    target = upload_dir / filename
-    uploaded_file.seek(0)
-    with target.open("wb") as output:
-        shutil.copyfileobj(uploaded_file, output)
-    return target.resolve()
 
 
 def default_output_dir(video_path: str) -> str:
