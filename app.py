@@ -33,6 +33,27 @@ COLOR_METRIC_HELP = {
     "warmth_score": "冷暖倾向 = 平均红色通道减平均蓝色通道，并归一化到 -100 到 100；正值偏暖，负值偏冷，接近 0 更中性。",
 }
 
+MOTION_METRIC_HELP = {
+    "motion_intensity": "运动强度基于相邻采样帧的稠密光流位移。平均运动量反映画面整体运动，P95 运动量更偏向画面中运动最明显的区域。",
+    "p95_motion": "P95 是第 95 百分位：把画面里所有像素的运动量从小到大排序后，取 95% 位置的值，用来观察运动较明显区域，避免被极少数异常点影响。",
+    "motion_variability": "运动波动度是各采样点平均运动量的标准差。数值越高，说明运动节奏越不稳定，越可能出现时快时慢或突然加速。",
+    "moving_area": "运动覆盖面积表示光流位移不低于 0.5 像素的缩略图像素占比。数值越高，说明运动覆盖范围越接近全画面。",
+}
+
+MOTION_LEVEL_LABELS = {
+    "still": "基本静止",
+    "low": "较慢",
+    "medium": "中等",
+    "high": "较快",
+}
+
+MOTION_RHYTHM_LABELS = {
+    "mostly_still": "整体基本静止",
+    "steady": "整体较平稳",
+    "variable": "快慢变化明显",
+    "bursty": "存在明显运动峰值",
+}
+
 
 def main() -> None:
     st.title("FrameSentry 视频自审")
@@ -113,6 +134,7 @@ def render_report(report: dict, report_dir: Path) -> None:
     metadata_module = modules.get("metadata", {})
     frame_issue_module = modules.get("frame_issues", {})
     color_module = modules.get("color_analysis", {})
+    motion_module = modules.get("motion_analysis", {})
     video = _module_data(metadata_module).get("video") or report.get("video", {})
     summary = report.get("summary", {})
     metadata_events = metadata_module.get("events", [])
@@ -129,8 +151,8 @@ def render_report(report: dict, report_dir: Path) -> None:
     if cache_message:
         st.info(cache_message)
 
-    overview_tab, metadata_tab, frame_tab, color_tab = st.tabs(
-        ["总览 Overview", "元数据 Metadata", "画面异常 Frame Issues", "色彩分析 Color Analysis"]
+    overview_tab, metadata_tab, frame_tab, color_tab, motion_tab = st.tabs(
+        ["总览", "元数据", "画面异常", "色彩分析", "运动分析"]
     )
 
     with overview_tab:
@@ -185,6 +207,9 @@ def render_report(report: dict, report_dir: Path) -> None:
 
     with color_tab:
         render_color_analysis(color_module)
+
+    with motion_tab:
+        render_motion_analysis(motion_module)
 
 
 def render_module_errors(module: dict) -> None:
@@ -254,6 +279,7 @@ def render_color_analysis(module: dict) -> None:
 
     with st.expander("采样数据", expanded=False):
         columns = [
+            "timecode",
             "frame_index",
             "timestamp",
             "dominant_color_hex",
@@ -272,6 +298,8 @@ def render_color_analysis(module: dict) -> None:
             width="stretch",
             hide_index=True,
             column_config={
+                "timecode": st.column_config.TextColumn("时间码"),
+                "timestamp": st.column_config.NumberColumn("时间（秒）", format="%.3f"),
                 "dominant_hue": st.column_config.NumberColumn("H 色相（度）", format="%.2f"),
                 "dominant_saturation": st.column_config.NumberColumn("S 饱和度（%）", format="%.2f"),
                 "dominant_value": st.column_config.NumberColumn("V 亮度（%）", format="%.2f"),
@@ -280,6 +308,66 @@ def render_color_analysis(module: dict) -> None:
                 "contrast_score": st.column_config.NumberColumn("对比度（%）", format="%.2f"),
                 "warmth_score": st.column_config.NumberColumn("冷暖倾向（-100 到 100）", format="%.2f"),
                 "dominant_coverage": st.column_config.NumberColumn("主色覆盖率", format="%.3f"),
+            },
+        )
+
+
+def render_motion_analysis(module: dict) -> None:
+    if not module:
+        st.info("当前报告没有运动分析数据。关闭缓存并重新分析可生成运动趋势图。")
+        return
+
+    st.caption(_module_status_text(module))
+    render_module_errors(module)
+    if module.get("status") == "failed":
+        return
+
+    data = _module_data(module)
+    samples = data.get("samples") or []
+    if not samples:
+        st.info("当前报告没有运动分析数据。")
+        return
+
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("采样点", summary.get("sample_count", len(samples)))
+    metric_cols[1].metric("平均运动量（px）", _format_number(summary.get("average_mean_motion_px")))
+    metric_cols[2].metric("峰值 P95 运动量（px）", _format_number(summary.get("peak_p95_motion_px")))
+    metric_cols[3].metric("平均运动覆盖（%）", _format_number(summary.get("average_moving_area_percent")))
+
+    detail_cols = st.columns(3)
+    detail_cols[0].metric("运动波动度", _format_number(summary.get("motion_variability")))
+    detail_cols[1].metric("整体运动等级", _motion_level_label(summary.get("motion_level")))
+    detail_cols[2].metric("节奏判断", _motion_rhythm_label(summary.get("rhythm_label")))
+    st.caption(MOTION_METRIC_HELP["motion_intensity"])
+    st.caption(MOTION_METRIC_HELP["p95_motion"])
+    st.caption(MOTION_METRIC_HELP["motion_variability"])
+    st.caption(MOTION_METRIC_HELP["moving_area"])
+
+    frame = pd.DataFrame(samples).sort_values("frame_index")
+    render_motion_intensity_chart(frame)
+    render_motion_area_chart(frame)
+
+    with st.expander("采样数据", expanded=False):
+        columns = [
+            "timecode",
+            "frame_index",
+            "timestamp",
+            "mean_motion_px",
+            "p95_motion_px",
+            "moving_area_percent",
+        ]
+        visible_columns = [column for column in columns if column in frame.columns]
+        st.dataframe(
+            frame[visible_columns],
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "timecode": st.column_config.TextColumn("时间码"),
+                "timestamp": st.column_config.NumberColumn("时间（秒）", format="%.3f"),
+                "mean_motion_px": st.column_config.NumberColumn("平均运动量（px）", format="%.4f"),
+                "p95_motion_px": st.column_config.NumberColumn("P95 运动量（px）", format="%.4f"),
+                "moving_area_percent": st.column_config.NumberColumn("运动覆盖面积（%）", format="%.2f"),
             },
         )
 
@@ -311,7 +399,7 @@ def render_hue_chart(frame: pd.DataFrame) -> None:
     st.caption(COLOR_METRIC_HELP["hsv"])
     tooltips = _chart_tooltips("dominant_hue", "H 色相（度）")
     base = alt.Chart(frame).encode(
-        x=alt.X("frame_index:Q", title="帧"),
+        x=alt.X("timestamp:Q", title="时间（秒）"),
         y=alt.Y("dominant_hue:Q", title="H 色相（度）", scale=alt.Scale(domain=[0, 360])),
     )
     line = base.mark_line(color="#56616f", opacity=0.65).encode(tooltip=tooltips)
@@ -354,7 +442,7 @@ def render_single_metric_chart(
         st.caption(help_text)
     tooltips = _chart_tooltips(column, label)
     base = alt.Chart(frame).encode(
-        x=alt.X("frame_index:Q", title="帧"),
+        x=alt.X("timestamp:Q", title="时间（秒）"),
         y=alt.Y(f"{column}:Q", title=label, scale=alt.Scale(domain=domain)),
     )
     line = base.mark_line(color="#4c78a8").encode(tooltip=tooltips)
@@ -387,8 +475,8 @@ def render_dispersion_chart(frame: pd.DataFrame) -> None:
         "color_dispersion": "色彩离散度（%）",
         "brightness_dispersion": "亮度离散度（%）",
     }
-    chart_frame = frame[["frame_index", *columns]].melt(
-        id_vars=["frame_index"],
+    chart_frame = frame[["timestamp", "timecode", "frame_index", *columns]].melt(
+        id_vars=["timestamp", "timecode", "frame_index"],
         value_vars=columns,
         var_name="metric",
         value_name="value",
@@ -398,11 +486,12 @@ def render_dispersion_chart(frame: pd.DataFrame) -> None:
         alt.Chart(chart_frame)
         .mark_line(point=True)
         .encode(
-            x=alt.X("frame_index:Q", title="帧"),
+            x=alt.X("timestamp:Q", title="时间（秒）"),
             y=alt.Y("value:Q", title="离散度（%）", scale=alt.Scale(domain=[0, 100])),
             color=alt.Color("metric_label:N", title="指标"),
             tooltip=[
-                alt.Tooltip("frame_index:Q", title="帧"),
+                alt.Tooltip("timecode:N", title="时间码"),
+                alt.Tooltip("frame_index:Q", title="帧", format=".0f"),
                 alt.Tooltip("metric_label:N", title="指标"),
                 alt.Tooltip("value:Q", title="数值", format=".2f"),
             ],
@@ -420,7 +509,7 @@ def render_contrast_chart(frame: pd.DataFrame) -> None:
     st.caption(COLOR_METRIC_HELP["contrast_score"])
     tooltips = _chart_tooltips("contrast_score", "对比度（%）")
     base = alt.Chart(frame).encode(
-        x=alt.X("frame_index:Q", title="帧"),
+        x=alt.X("timestamp:Q", title="时间（秒）"),
         y=alt.Y("contrast_score:Q", title="对比度（%）", scale=alt.Scale(domain=[0, 100])),
     )
     line = base.mark_line(color="#4c78a8").encode(tooltip=tooltips)
@@ -438,7 +527,7 @@ def render_warmth_chart(frame: pd.DataFrame) -> None:
     st.caption(COLOR_METRIC_HELP["warmth_score"])
     tooltips = _chart_tooltips("warmth_score", "冷暖倾向")
     base = alt.Chart(frame).encode(
-        x=alt.X("frame_index:Q", title="帧"),
+        x=alt.X("timestamp:Q", title="时间（秒）"),
         y=alt.Y("warmth_score:Q", title="冷暖倾向（-100 到 100）", scale=alt.Scale(domain=[-100, 100])),
     )
     line = base.mark_line(color="#d95f02").encode(tooltip=tooltips)
@@ -459,6 +548,62 @@ def render_warmth_chart(frame: pd.DataFrame) -> None:
         ["#2f80ed", "#d9d9d9", "#f2994a"],
         [-100, -50, 0, 50, 100],
     )
+
+
+def render_motion_intensity_chart(frame: pd.DataFrame) -> None:
+    columns = [column for column in ["mean_motion_px", "p95_motion_px"] if column in frame.columns]
+    if not columns:
+        return
+
+    st.subheader("运动强度趋势")
+    st.caption(MOTION_METRIC_HELP["motion_intensity"])
+    labels = {
+        "mean_motion_px": "平均运动量（px）",
+        "p95_motion_px": "P95 运动量（px）",
+    }
+    chart_frame = frame[["timestamp", "timecode", "frame_index", *columns]].melt(
+        id_vars=["timestamp", "timecode", "frame_index"],
+        value_vars=columns,
+        var_name="metric",
+        value_name="value",
+    )
+    chart_frame["metric_label"] = chart_frame["metric"].map(labels)
+    chart = (
+        alt.Chart(chart_frame)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("timestamp:Q", title="时间（秒）"),
+            y=alt.Y("value:Q", title="运动量（px）"),
+            color=alt.Color("metric_label:N", title="指标"),
+            tooltip=[
+                alt.Tooltip("timecode:N", title="时间码"),
+                alt.Tooltip("frame_index:Q", title="帧", format=".0f"),
+                alt.Tooltip("metric_label:N", title="指标"),
+                alt.Tooltip("value:Q", title="数值", format=".4f"),
+            ],
+        )
+        .properties(height=280)
+    )
+    st.altair_chart(chart, width="stretch")
+
+
+def render_motion_area_chart(frame: pd.DataFrame) -> None:
+    if "moving_area_percent" not in frame.columns:
+        return
+
+    st.subheader("运动覆盖面积趋势")
+    st.caption(MOTION_METRIC_HELP["moving_area"])
+    tooltips = _motion_chart_tooltips("moving_area_percent", "运动覆盖面积（%）")
+    base = alt.Chart(frame).encode(
+        x=alt.X("timestamp:Q", title="时间（秒）"),
+        y=alt.Y("moving_area_percent:Q", title="运动覆盖面积（%）", scale=alt.Scale(domain=[0, 100])),
+    )
+    area = base.mark_area(color="#4c78a8", opacity=0.28).encode(tooltip=tooltips)
+    line = base.mark_line(color="#4c78a8").encode(tooltip=tooltips)
+    points = base.mark_circle(size=42, color="#4c78a8", stroke="#333333", strokeWidth=0.35).encode(
+        tooltip=tooltips,
+    )
+    st.altair_chart((area + line + points).properties(height=280), width="stretch")
 
 
 def render_chart_with_color_axis(
@@ -523,9 +668,19 @@ def continuous_color_axis_html(
 
 
 def _chart_tooltips(column: str, label: str) -> list:
-    tooltips = [alt.Tooltip("frame_index:Q", title="帧")]
-    tooltips.append(alt.Tooltip(f"{column}:Q", title=label, format=".2f"))
-    return tooltips
+    return [
+        alt.Tooltip("timecode:N", title="时间码"),
+        alt.Tooltip("frame_index:Q", title="帧", format=".0f"),
+        alt.Tooltip(f"{column}:Q", title=label, format=".2f"),
+    ]
+
+
+def _motion_chart_tooltips(column: str, label: str) -> list:
+    return [
+        alt.Tooltip("timecode:N", title="时间码"),
+        alt.Tooltip("frame_index:Q", title="帧", format=".0f"),
+        alt.Tooltip(f"{column}:Q", title=label, format=".2f"),
+    ]
 
 
 def render_event_table(events: list[dict]) -> None:
@@ -740,6 +895,14 @@ def _format_number(value) -> str:
     if isinstance(value, (int, float)):
         return f"{value:.2f}"
     return str(value)
+
+
+def _motion_level_label(value) -> str:
+    return MOTION_LEVEL_LABELS.get(value, str(value))
+
+
+def _motion_rhythm_label(value) -> str:
+    return MOTION_RHYTHM_LABELS.get(value, str(value))
 
 
 def _audio_stream_text(value) -> str:

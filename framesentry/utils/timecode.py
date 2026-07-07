@@ -17,3 +17,11 @@ def frame_to_timecode(frame_index: int, fps: float) -> str:
     minutes = (total_seconds % 3600) // 60
     seconds = total_seconds % 60
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}:{frame_number:02d}"
+
+
+def seconds_to_timecode(seconds: float) -> str:
+    total_seconds = max(0, int(seconds))
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    second = total_seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{second:02d}"

@@ -184,7 +184,7 @@ class StreamlitReportTests(unittest.TestCase):
         ):
             streamlit.session_state = {}
             streamlit.columns.side_effect = lambda spec: [MagicMock() for _ in range(spec if isinstance(spec, int) else len(spec))]
-            streamlit.tabs.return_value = [MagicMock(), MagicMock(), MagicMock(), MagicMock()]
+            streamlit.tabs.return_value = [MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()]
             streamlit.slider.return_value = 0.7
             streamlit.selectbox.return_value = "全部异常"
             streamlit.expander.return_value.__enter__.return_value = MagicMock()
