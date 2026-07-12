@@ -152,7 +152,7 @@ def render_report(report: dict, report_dir: Path) -> None:
         st.info(cache_message)
 
     overview_tab, metadata_tab, frame_tab, color_tab, motion_tab = st.tabs(
-        ["总览", "元数据", "画面异常", "色彩分析", "运动分析"]
+        ["总览", "元数据", "异常帧", "色彩分析", "运动分析"]
     )
 
     with overview_tab:
