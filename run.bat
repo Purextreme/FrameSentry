@@ -41,6 +41,9 @@ echo To use another port, run: run.bat 8503
 echo Press Ctrl+C to stop the server.
 echo.
 
+set "STREAMLIT_SERVER_HEADLESS=true"
+set "STREAMLIT_SERVER_SHOW_EMAIL_PROMPT=false"
+set "STREAMLIT_BROWSER_GATHER_USAGE_STATS=false"
 ".venv\Scripts\python.exe" -m streamlit run app.py --server.address 127.0.0.1 --server.port %PORT% 1>>"logs\streamlit.log" 2>&1
 
 set "EXIT_CODE=%ERRORLEVEL%"

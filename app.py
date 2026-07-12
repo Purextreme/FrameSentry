@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
+import sys
+import tempfile
 from datetime import datetime
 from html import escape
 from pathlib import Path
@@ -1009,43 +1012,70 @@ def _audio_stream_text(value) -> str:
 
 
 def choose_video_file() -> str:
-    from tkinter import Tk, filedialog
-
-    root = Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    try:
-        path = filedialog.askopenfilename(
-            title="选择视频文件",
-            filetypes=[
-                ("视频文件", "*.mp4 *.mov *.m4v *.avi *.mkv"),
-                ("所有文件", "*.*"),
-            ],
-        )
-        return str(path) if path else ""
-    finally:
-        root.destroy()
+    return _choose_file(
+        title="选择视频文件",
+        filetypes=[
+            ("视频文件", "*.mp4 *.mov *.m4v *.avi *.mkv"),
+            ("所有文件", "*.*"),
+        ],
+    )
 
 
 def choose_report_file() -> str:
-    from tkinter import Tk, filedialog
+    return _choose_file(
+        title="选择历史 report.json",
+        initialdir=str(Path("output").resolve()),
+        filetypes=[
+            ("FrameSentry 报告", "report.json"),
+            ("JSON 文件", "*.json"),
+            ("所有文件", "*.*"),
+        ],
+    )
 
-    root = Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    try:
-        path = filedialog.askopenfilename(
-            title="选择历史 report.json",
-            initialdir=str(Path("output").resolve()),
-            filetypes=[
-                ("FrameSentry 报告", "report.json"),
-                ("JSON 文件", "*.json"),
-                ("所有文件", "*.*"),
+
+def _choose_file(*, title: str, filetypes: list[tuple[str, str]], initialdir: str = "") -> str:
+    script = r"""
+import json
+import sys
+from pathlib import Path
+from tkinter import Tk, filedialog
+
+root = Tk()
+root.withdraw()
+root.attributes("-topmost", True)
+options = {"title": sys.argv[1], "filetypes": json.loads(sys.argv[2])}
+if sys.argv[3]:
+    options["initialdir"] = sys.argv[3]
+try:
+    path = filedialog.askopenfilename(**options)
+    Path(sys.argv[4]).write_text(str(path) if path else "", encoding="utf-8")
+finally:
+    root.destroy()
+"""
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    with tempfile.TemporaryDirectory() as temp_dir:
+        result_path = Path(temp_dir) / "selected_path.txt"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                script,
+                title,
+                json.dumps(filetypes, ensure_ascii=False),
+                initialdir,
+                str(result_path),
             ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            creationflags=creationflags,
+            check=False,
         )
-        return str(path) if path else ""
-    finally:
-        root.destroy()
+        selected_path = result_path.read_text(encoding="utf-8").strip() if result_path.exists() else ""
+    if result.returncode != 0:
+        LOGGER.error("File dialog failed: %s", (result.stderr or "").strip())
+        return ""
+    return selected_path
 
 
 def default_output_dir(video_path: str) -> str:

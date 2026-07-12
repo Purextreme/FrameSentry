@@ -26,6 +26,7 @@ todo.md
 *.mkv
 
 # Local secrets and editor files
+config/api_config.json
 .env
 .env.*
 .vscode/
