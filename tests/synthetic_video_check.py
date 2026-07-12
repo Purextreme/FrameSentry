@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -12,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from framesentry.scanner import scan_video
+from framesentry.analyzers import default_registry
 
 OUTPUT = ROOT / "output" / "synthetic_checks"
 FPS = 25
@@ -63,11 +65,26 @@ def collect_module_events(report: dict) -> list[dict]:
 
 
 def run_scan(video_path: Path, report_dir: Path) -> None:
-    scan_video(
-        video_path,
-        report_dir,
-        use_cache=False,
-    )
+    registry = default_registry()
+    for analyzer in registry.analyzers():
+        if analyzer.module_id == "llm_subtitle_detection":
+            analyzer.api_client = EmptyLlmClient()
+    with patch("framesentry.scanner.default_registry", return_value=registry):
+        scan_video(
+            video_path,
+            report_dir,
+            use_cache=False,
+        )
+
+
+class EmptyLlmClient:
+    def detect(self, samples: list[dict]) -> dict:
+        return {
+            "processed_frame_times": [sample["time"] for sample in samples],
+            "segments": [],
+            "usage": {},
+            "model": "mock",
+        }
 
 
 def make_black_blank_video(path: Path) -> None:

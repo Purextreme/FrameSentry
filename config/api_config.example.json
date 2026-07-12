@@ -1,6 +1,5 @@
 {
   "base_url": "",
   "api_key": "",
-  "ocr_model": "",
-  "text_model": ""
+  "multimodal_model": "mimo-v2.5"
 }
