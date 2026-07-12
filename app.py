@@ -10,8 +10,9 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from framesentry.analysis import build_summary
 from framesentry.presentation import EVENT_TYPE_LABELS, event_type_label, summary_label
-from framesentry.scanner import RUNTIME_CACHE_KEY, scan_video
+from framesentry.scanner import start_scan_job
 
 
 LOGGER = logging.getLogger(__name__)
@@ -58,35 +59,41 @@ MOTION_RHYTHM_LABELS = {
 def main() -> None:
     st.title("FrameSentry 视频自审")
     load_report_from_query()
+    scan_job = st.session_state.get("scan_job")
+    scan_active = bool(scan_job and scan_job.snapshot().get("status") in {"pending", "running"})
 
     with st.sidebar:
         st.header("分析设置")
         if "video_path" not in st.session_state:
             st.session_state["video_path"] = ""
-        if st.button("选择视频文件", width="stretch"):
+        if st.button("选择视频文件", width="stretch", disabled=scan_active):
             selected_path = choose_video_file()
             if selected_path:
                 st.session_state["video_path"] = selected_path
                 st.session_state["output_dir"] = default_output_dir(selected_path)
-        video_path = st.text_input("视频文件路径", key="video_path")
+        video_path = st.text_input("视频文件路径", key="video_path", disabled=scan_active)
         if "output_dir" not in st.session_state:
             st.session_state["output_dir"] = "output/reports"
-        output_dir = st.text_input("记录输出目录", key="output_dir")
-        sample_scale = st.number_input("分析缩略尺寸", min_value=160, max_value=1080, value=480, step=40)
-        max_outlier_frames = st.number_input("瞬时异常最大持续帧数", min_value=1, max_value=5, value=2, step=1)
-        use_cache = st.checkbox("同文件未变化时读取缓存", value=True)
-        run_scan = st.button("开始分析", type="primary", width="stretch")
+        output_dir = st.text_input("记录输出目录", key="output_dir", disabled=scan_active)
+        sample_scale = st.number_input(
+            "分析缩略尺寸", min_value=160, max_value=1080, value=480, step=40, disabled=scan_active
+        )
+        max_outlier_frames = st.number_input(
+            "瞬时异常最大持续帧数", min_value=1, max_value=5, value=2, step=1, disabled=scan_active
+        )
+        use_cache = st.checkbox("同文件未变化时读取缓存", value=True, disabled=scan_active)
+        run_scan = st.button("开始分析", type="primary", width="stretch", disabled=scan_active)
 
         st.divider()
         st.header("打开已有报告")
         if "existing_report" not in st.session_state:
             st.session_state["existing_report"] = ""
-        if st.button("选择 report.json", width="stretch"):
+        if st.button("选择 report.json", width="stretch", disabled=scan_active):
             selected_report = choose_report_file()
             if selected_report:
                 st.session_state["existing_report"] = selected_report
-        existing_report = st.text_input("report.json 路径", key="existing_report")
-        load_report = st.button("读取报告", width="stretch")
+        existing_report = st.text_input("report.json 路径", key="existing_report", disabled=scan_active)
+        load_report = st.button("读取报告", width="stretch", disabled=scan_active)
 
     if run_scan:
         if not video_path.strip():
@@ -94,24 +101,16 @@ def main() -> None:
         elif not Path(video_path).exists():
             st.error("视频文件不存在，请检查路径。")
         else:
-            with st.spinner("正在分析视频，请稍候..."):
-                report = scan_video(
-                    video_path,
-                    output_dir,
-                    sample_scale=int(sample_scale),
-                    max_outlier_frames=int(max_outlier_frames),
-                    use_cache=use_cache,
-                )
-            cache_info = report.pop(RUNTIME_CACHE_KEY, {})
-            report_path = Path(cache_info.get("report_path", Path(output_dir) / "report.json"))
-            st.session_state["report"] = report
-            st.session_state["report_dir"] = str(report_path.parent.resolve())
-            if cache_info.get("cache_hit"):
-                st.session_state["cache_message"] = f"已读取缓存报告：{report_path}"
-                st.success("检测到同文件未变化，已直接读取缓存报告。")
-            else:
-                st.session_state["cache_message"] = "未命中缓存，已完成重新分析。"
-                st.success("分析完成。")
+            st.session_state.pop("report", None)
+            st.session_state.pop("scan_error", None)
+            st.session_state["scan_job"] = start_scan_job(
+                video_path,
+                output_dir,
+                sample_scale=int(sample_scale),
+                max_outlier_frames=int(max_outlier_frames),
+                use_cache=use_cache,
+            )
+            st.rerun()
 
     if load_report:
         report_path = Path(existing_report)
@@ -121,12 +120,49 @@ def main() -> None:
             load_report_file(report_path)
             st.success("报告已读取。")
 
+    scan_job = st.session_state.get("scan_job")
+    if scan_job:
+        render_scan_job(scan_job)
+        return
+
+    scan_error = st.session_state.pop("scan_error", None)
+    if scan_error:
+        st.error(f"分析任务失败：{scan_error}")
+
     report = st.session_state.get("report")
     if not report:
         st.info("请在左侧指定视频并开始分析，或读取已有 report.json。")
         return
 
     render_report(report, Path(st.session_state.get("report_dir", ".")))
+
+
+@st.fragment(run_every=1)
+def render_scan_job(scan_job) -> None:
+    snapshot = scan_job.snapshot()
+    report_path = Path(snapshot["report_path"])
+    if snapshot["status"] == "completed":
+        st.session_state["report"] = snapshot["report"]
+        st.session_state["report_dir"] = str(report_path.parent.resolve())
+        if snapshot["cache_hit"]:
+            st.session_state["cache_message"] = f"已读取缓存报告：{report_path}"
+        else:
+            failed = any(module.get("status") == "failed" for module in snapshot["modules"].values())
+            st.session_state["cache_message"] = "分析完成，但部分模块失败。" if failed else "分析完成。"
+        st.session_state.pop("scan_job", None)
+        st.rerun()
+
+    if snapshot["status"] == "failed":
+        st.session_state["scan_error"] = snapshot.get("error") or "未知错误"
+        st.session_state.pop("scan_job", None)
+        st.rerun()
+
+    modules = snapshot["modules"]
+    metadata = modules.get("metadata", {})
+    video = _module_data(metadata).get("video", {})
+    frame_events = modules.get("frame_issues", {}).get("events", [])
+    partial_report = {"video": video, "summary": build_summary(frame_events), "modules": modules}
+    render_report(partial_report, report_path.parent)
 
 
 def render_report(report: dict, report_dir: Path) -> None:
@@ -140,13 +176,18 @@ def render_report(report: dict, report_dir: Path) -> None:
     metadata_events = metadata_module.get("events", [])
     events = frame_issue_module.get("events", [])
 
+    render_module_progress(modules)
+
     st.subheader("视频基础信息")
-    cols = st.columns(4)
-    cols[0].metric("分辨率", f"{video.get('width')} x {video.get('height')}")
-    cols[1].metric("帧率", video.get("fps"))
-    cols[2].metric("时长（秒）", _format_number(video.get("duration")))
-    cols[3].metric("事件总数", len(metadata_events) + len(events))
-    st.caption(str(video.get("path", "")))
+    if metadata_module.get("status") == "completed" or not metadata_module:
+        cols = st.columns(4)
+        cols[0].metric("分辨率", f"{video.get('width')} x {video.get('height')}")
+        cols[1].metric("帧率", video.get("fps"))
+        cols[2].metric("时长（秒）", _format_number(video.get("duration")))
+        cols[3].metric("总帧数", video.get("frame_count", ""))
+        st.caption(str(video.get("path", "")))
+    else:
+        st.info("正在读取视频基础信息…")
     cache_message = st.session_state.get("cache_message")
     if cache_message:
         st.info(cache_message)
@@ -157,53 +198,59 @@ def render_report(report: dict, report_dir: Path) -> None:
 
     with overview_tab:
         st.subheader("异常摘要")
-        summary_cols = st.columns(3)
-        for index, (key, value) in enumerate(summary.items()):
-            summary_cols[index % 3].metric(summary_label(key), value)
+        if frame_issue_module.get("status") in {"pending", "running"}:
+            st.info("异常帧模块正在分析中…")
+        elif frame_issue_module.get("status") == "failed":
+            st.error("异常帧分析失败。")
+        else:
+            summary_cols = st.columns(3)
+            for index, (key, value) in enumerate(summary.items()):
+                summary_cols[index % 3].metric(summary_label(key), value)
 
     with metadata_tab:
-        if metadata_module:
-            st.caption(_module_status_text(metadata_module))
-        render_module_errors(metadata_module)
-        render_metadata_details(video)
-        if metadata_events:
-            render_event_table(metadata_events)
+        if _render_unfinished_module(metadata_module):
+            pass
         else:
-            st.info("没有基础信息提示。")
+            st.caption(_module_status_text(metadata_module))
+            render_metadata_details(video)
+            if metadata_events:
+                render_event_table(metadata_events)
+            else:
+                st.info("没有基础信息提示。")
 
     with frame_tab:
-        if frame_issue_module:
+        if _render_unfinished_module(frame_issue_module):
+            pass
+        else:
             st.caption(_module_status_text(frame_issue_module))
-        render_module_errors(frame_issue_module)
+            st.subheader("筛选")
+            confidence = st.slider("最低置信度", min_value=0.0, max_value=1.0, value=0.7, step=0.05)
+            labels = [
+                "全部异常",
+                event_type_label("duplicate_frame"),
+                event_type_label("black_frame"),
+                event_type_label("blank_frame"),
+                event_type_label("transient_outlier"),
+            ]
+            selected_label = st.selectbox("异常类型", labels, index=0)
+            selected_type = _event_type_from_label(selected_label)
+            filtered = []
+            for event in events:
+                event_confidence = float(event.get("confidence", 1.0))
+                event_type = event.get("type", "")
+                if event_confidence < confidence:
+                    continue
+                if selected_label == "全部异常" and event_type not in ISSUE_EVENT_TYPES:
+                    continue
+                if selected_type and event_type != selected_type:
+                    continue
+                filtered.append(event)
 
-        st.subheader("筛选")
-        confidence = st.slider("最低置信度", min_value=0.0, max_value=1.0, value=0.7, step=0.05)
-        labels = [
-            "全部异常",
-            event_type_label("duplicate_frame"),
-            event_type_label("black_frame"),
-            event_type_label("blank_frame"),
-            event_type_label("transient_outlier"),
-        ]
-        selected_label = st.selectbox("异常类型", labels, index=0)
-        selected_type = _event_type_from_label(selected_label)
-        filtered = []
-        for event in events:
-            event_confidence = float(event.get("confidence", 1.0))
-            event_type = event.get("type", "")
-            if event_confidence < confidence:
-                continue
-            if selected_label == "全部异常" and event_type not in ISSUE_EVENT_TYPES:
-                continue
-            if selected_type and event_type != selected_type:
-                continue
-            filtered.append(event)
-
-        st.subheader("事件概览")
-        st.caption(f"当前显示 {len(filtered)} / {len(events)} 个事件。")
-        render_event_table(filtered)
-        render_event_review_list(filtered, report_dir)
-        log_debug_info(filtered, report_dir)
+            st.subheader("事件概览")
+            st.caption(f"当前显示 {len(filtered)} / {len(events)} 个事件。")
+            render_event_table(filtered)
+            render_event_review_list(filtered, report_dir)
+            log_debug_info(filtered, report_dir)
 
     with color_tab:
         render_color_analysis(color_module)
@@ -220,9 +267,54 @@ def render_module_errors(module: dict) -> None:
     st.error(f"{module.get('module_name', 'Analyzer')}: {message}")
 
 
+def render_module_progress(modules: dict) -> None:
+    if not any(module.get("status") in {"pending", "running"} for module in modules.values()):
+        return
+    labels = {
+        "metadata": "元数据",
+        "frame_issues": "异常帧",
+        "color_analysis": "色彩分析",
+        "motion_analysis": "运动分析",
+    }
+    status_labels = {
+        "pending": "等待分析",
+        "running": "正在分析…",
+        "completed": "分析完成",
+        "failed": "分析失败",
+        "skipped": "已跳过",
+    }
+    completed = sum(
+        module.get("status") in {"completed", "failed", "skipped"} for module in modules.values()
+    )
+    st.subheader(f"分析进度：{completed} / {len(modules)}")
+    columns = st.columns(len(modules))
+    for column, (module_id, module) in zip(columns, modules.items()):
+        column.metric(labels.get(module_id, module.get("module_name", module_id)), status_labels.get(module.get("status"), "未知"))
+
+
+def _render_unfinished_module(module: dict) -> bool:
+    status = module.get("status")
+    if status == "pending":
+        st.info("等待分析…")
+        return True
+    if status == "running":
+        st.info("正在分析中…")
+        return True
+    if status == "failed":
+        render_module_errors(module)
+        return True
+    if status == "skipped":
+        st.info("本次分析已跳过该模块。")
+        return True
+    return False
+
+
 def render_color_analysis(module: dict) -> None:
     if not module:
         st.info("当前报告没有颜色分析数据。关闭缓存并重新分析可生成颜色趋势图。")
+        return
+
+    if _render_unfinished_module(module):
         return
 
     st.caption(_module_status_text(module))
@@ -315,6 +407,9 @@ def render_color_analysis(module: dict) -> None:
 def render_motion_analysis(module: dict) -> None:
     if not module:
         st.info("当前报告没有运动分析数据。关闭缓存并重新分析可生成运动趋势图。")
+        return
+
+    if _render_unfinished_module(module):
         return
 
     st.caption(_module_status_text(module))

@@ -45,6 +45,19 @@ class AnalysisCoreTests(unittest.TestCase):
         self.assertEqual(results["broken"].status, "failed")
         self.assertEqual(results["ok"].status, "completed")
 
+    def test_runner_iter_reports_module_starts_and_results_in_order(self) -> None:
+        registry = AnalyzerRegistry()
+        registry.register(PassingAnalyzer())
+        registry.register(FailingAnalyzer())
+        context = VideoContext(video_path="input.mp4", output_dir="output/report", video_id="input")
+        started = []
+
+        results = list(AnalysisRunner(registry).run_iter(context, on_started=lambda analyzer: started.append(analyzer.module_id)))
+
+        self.assertEqual(started, ["ok", "broken"])
+        self.assertEqual([module_id for module_id, _ in results], ["ok", "broken"])
+        self.assertEqual(results[1][1].status, "failed")
+
     def test_report_builder_uses_module_schema(self) -> None:
         context = VideoContext(
             video_path="input.mp4",

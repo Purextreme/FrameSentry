@@ -3,7 +3,8 @@ from __future__ import annotations
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from collections.abc import Iterator
+from typing import Any, Callable
 
 
 VALID_STATUSES = {"pending", "running", "completed", "failed", "skipped"}
@@ -90,23 +91,29 @@ class AnalysisRunner:
         self.registry = registry
 
     def run(self, context: VideoContext) -> dict[str, ModuleResult]:
-        results: dict[str, ModuleResult] = {}
+        return dict(self.run_iter(context))
+
+    def run_iter(
+        self,
+        context: VideoContext,
+        on_started: Callable[[BaseAnalyzer], None] | None = None,
+    ) -> Iterator[tuple[str, ModuleResult]]:
         for analyzer in self.registry.analyzers():
+            if on_started is not None:
+                on_started(analyzer)
             if not analyzer.enabled:
-                results[analyzer.module_id] = ModuleResult(
+                result = ModuleResult(
                     module_id=analyzer.module_id,
                     module_name=analyzer.module_name,
                     status="skipped",
                     severity="info",
                 )
-                continue
-
-            try:
-                result = analyzer.run(context)
-            except Exception as exc:
-                result = build_failed_result(analyzer, exc)
-            results[analyzer.module_id] = result
-        return results
+            else:
+                try:
+                    result = analyzer.run(context)
+                except Exception as exc:
+                    result = build_failed_result(analyzer, exc)
+            yield analyzer.module_id, result
 
 
 class ReportBuilder:
