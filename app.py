@@ -13,7 +13,6 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from framesentry.analysis import build_summary
 from framesentry.presentation import EVENT_TYPE_LABELS, event_type_label, summary_label
 from framesentry.scanner import start_scan_job
 
@@ -106,6 +105,7 @@ def main() -> None:
         else:
             st.session_state.pop("report", None)
             st.session_state.pop("scan_error", None)
+            st.session_state.pop("cache_message", None)
             st.session_state["scan_job"] = start_scan_job(
                 video_path,
                 output_dir,
@@ -160,12 +160,7 @@ def render_scan_job(scan_job) -> None:
         st.session_state.pop("scan_job", None)
         st.rerun()
 
-    modules = snapshot["modules"]
-    metadata = modules.get("metadata", {})
-    video = _module_data(metadata).get("video", {})
-    frame_events = modules.get("frame_issues", {}).get("events", [])
-    partial_report = {"video": video, "summary": build_summary(frame_events), "modules": modules}
-    render_report(partial_report, report_path.parent)
+    render_module_progress(snapshot["modules"])
 
 
 def render_report(report: dict, report_dir: Path) -> None:
