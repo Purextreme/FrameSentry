@@ -169,6 +169,7 @@ def render_report(report: dict, report_dir: Path) -> None:
     frame_issue_module = modules.get("frame_issues", {})
     color_module = modules.get("color_analysis", {})
     motion_module = modules.get("motion_analysis", {})
+    subtitle_module = modules.get("llm_subtitle_detection", {})
     video = _module_data(metadata_module).get("video") or report.get("video", {})
     summary = report.get("summary", {})
     metadata_events = metadata_module.get("events", [])
@@ -190,8 +191,8 @@ def render_report(report: dict, report_dir: Path) -> None:
     if cache_message:
         st.info(cache_message)
 
-    overview_tab, metadata_tab, frame_tab, color_tab, motion_tab = st.tabs(
-        ["总览", "元数据", "异常帧", "色彩分析", "运动分析"]
+    overview_tab, metadata_tab, frame_tab, color_tab, motion_tab, subtitle_tab = st.tabs(
+        ["总览", "元数据", "异常帧", "色彩分析", "运动分析", "LLM字幕检测"]
     )
 
     with overview_tab:
@@ -256,6 +257,9 @@ def render_report(report: dict, report_dir: Path) -> None:
     with motion_tab:
         render_motion_analysis(motion_module)
 
+    with subtitle_tab:
+        render_llm_subtitle_detection(subtitle_module, report_dir)
+
 
 def render_module_errors(module: dict) -> None:
     if module.get("status") != "failed":
@@ -273,6 +277,7 @@ def render_module_progress(modules: dict) -> None:
         "frame_issues": "异常帧",
         "color_analysis": "色彩分析",
         "motion_analysis": "运动分析",
+        "llm_subtitle_detection": "LLM字幕检测",
     }
     status_labels = {
         "pending": "等待分析",
@@ -463,6 +468,88 @@ def render_motion_analysis(module: dict) -> None:
                 "moving_area_percent": st.column_config.NumberColumn("运动覆盖面积（%）", format="%.2f"),
             },
         )
+
+
+def render_llm_subtitle_detection(module: dict, report_dir: Path) -> None:
+    if not module:
+        st.info("当前报告没有 LLM 字幕检测数据。关闭缓存并重新分析可生成检测结果。")
+        return
+
+    status = module.get("status")
+    if status in {"pending", "running", "failed"}:
+        _render_unfinished_module(module)
+        return
+    if status == "skipped":
+        warnings = module.get("warnings") or []
+        message = warnings[0].get("message") if warnings and isinstance(warnings[0], dict) else "本次分析已跳过该模块。"
+        st.info(message)
+        return
+
+    st.caption(_module_status_text(module))
+    summary = module.get("summary") if isinstance(module.get("summary"), dict) else {}
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("采样帧", summary.get("sampled_frames", 0))
+    metric_cols[1].metric("字幕段", summary.get("detected_segments", 0))
+    metric_cols[2].metric("疑似问题", summary.get("suspected_errors", 0))
+    metric_cols[3].metric("模型耗时（秒）", _format_number(float(summary.get("model_latency_ms", 0) or 0) / 1000))
+
+    detail_cols = st.columns(3)
+    detail_cols[0].metric("上传流量", _format_bytes(summary.get("total_uploaded_bytes", 0)))
+    detail_cols[1].metric("模型调用", summary.get("model_api_calls", 0))
+    detail_cols[2].metric("Token", summary.get("total_tokens", 0))
+
+    segments = _module_data(module).get("segments") or []
+    if not segments:
+        st.info("未检测到字幕或标题文字。")
+        return
+
+    st.subheader("字幕检测结果")
+    rows = [
+        {
+            "开始（秒）": segment.get("start_time"),
+            "结束（秒）": segment.get("end_time"),
+            "字幕原文": segment.get("text", ""),
+            "疑似问题": "是" if segment.get("suspected_error") else "否",
+            "问题说明": segment.get("reason", ""),
+            "建议": segment.get("suggestion", ""),
+            "置信度": segment.get("confidence", 0.0),
+        }
+        for segment in segments
+    ]
+    st.dataframe(
+        pd.DataFrame(rows),
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "开始（秒）": st.column_config.NumberColumn(format="%.3f"),
+            "结束（秒）": st.column_config.NumberColumn(format="%.3f"),
+            "字幕原文": st.column_config.TextColumn(width="large"),
+            "问题说明": st.column_config.TextColumn(width="large"),
+            "建议": st.column_config.TextColumn(width="large"),
+            "置信度": st.column_config.NumberColumn(format="%.2f"),
+        },
+    )
+
+    st.subheader("代表截图")
+    shown = 0
+    for index, segment in enumerate(segments):
+        screenshot = segment.get("screenshot")
+        if not screenshot:
+            continue
+        resolved = _resolve_screenshot_path(report_dir, screenshot)
+        if not resolved.exists():
+            continue
+        with st.expander(
+            f"{index + 1}. {_format_number(segment.get('start_time'))}s - "
+            f"{_format_number(segment.get('end_time'))}s | {segment.get('text', '')}",
+            expanded=shown == 0,
+        ):
+            st.image(str(resolved), width="stretch")
+            if segment.get("suspected_error"):
+                st.warning(f"疑似：{segment.get('reason') or '请人工复核'}")
+        shown += 1
+    if not shown:
+        st.info("当前报告没有可用的字幕代表截图。")
 
 
 def render_metadata_details(video: dict) -> None:
@@ -988,6 +1075,15 @@ def _format_number(value) -> str:
     if isinstance(value, (int, float)):
         return f"{value:.2f}"
     return str(value)
+
+
+def _format_bytes(value) -> str:
+    byte_count = float(value or 0)
+    if byte_count >= 1024 * 1024:
+        return f"{byte_count / (1024 * 1024):.2f} MB"
+    if byte_count >= 1024:
+        return f"{byte_count / 1024:.2f} KB"
+    return f"{int(byte_count)} B"
 
 
 def _motion_level_label(value) -> str:

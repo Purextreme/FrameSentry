@@ -97,7 +97,8 @@ class AnalyzerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_dir:
             video = Path(temporary_dir) / "sample.avi"
             _write_video(video, 20)
-            result = LlmSubtitleDetectionAnalyzer(FakeClient()).run(_context(video, Path(temporary_dir)))
+            output = Path(temporary_dir) / "中文报告"
+            result = LlmSubtitleDetectionAnalyzer(FakeClient()).run(_context(video, output))
             self.assertEqual(result.summary["model_api_calls"], 1)
             self.assertGreater(result.summary["total_uploaded_bytes"], 0)
             self.assertIn("model_latency_ms", result.summary)
@@ -105,6 +106,8 @@ class AnalyzerTests(unittest.TestCase):
             self.assertEqual(len(result.events), 1)
             self.assertTrue(result.events[0]["reason"].startswith("疑似："))
             self.assertEqual(result.data["processed_frame_times"], [0.0, 1.0])
+            self.assertTrue(result.data["segments"][0]["screenshot"])
+            self.assertTrue((output / result.data["segments"][0]["screenshot"]).is_file())
 
     def test_secret_is_not_written_to_result(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

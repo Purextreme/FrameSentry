@@ -250,7 +250,10 @@ def save_representative_frames(
         middle = (segment["start_time"] + segment["end_time"]) / 2
         sample = min(samples, key=lambda item: abs(item["time"] - middle))
         path = directory / f"segment_{index:04d}.jpg"
-        if cv2.imwrite(str(path), sample["frame"]):
+        encoded_ok, encoded = cv2.imencode(".jpg", sample["frame"])
+        if encoded_ok:
+            encoded.tofile(str(path))
+        if path.exists() and path.stat().st_size > 0:
             relative = str(Path("llm_subtitle_screenshots") / path.name).replace("\\", "/")
             segment["screenshot"] = relative
             assets.append({"type": "screenshot", "path": relative})
