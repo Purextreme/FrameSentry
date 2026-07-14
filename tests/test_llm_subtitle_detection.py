@@ -66,9 +66,12 @@ class ResponseTests(unittest.TestCase):
         self.assertEqual(segments[0]["text"], "爻光")
         self.assertEqual(segments[0]["confidence"], 1.0)
 
-    def test_requires_all_processed_frame_times(self) -> None:
-        with self.assertRaisesRegex(ValueError, "all submitted frame times"):
-            validate_detection_response({"processed_frame_times": [0.0], "segments": []}, [0.0, 1.0])
+    def test_allows_incomplete_processed_frame_times(self) -> None:
+        segments, processed_times = validate_detection_response(
+            {"processed_frame_times": [0.0], "segments": []}, [0.0, 1.0]
+        )
+        self.assertEqual(segments, [])
+        self.assertEqual(processed_times, [0.0])
 
 
 class AnalyzerTests(unittest.TestCase):
@@ -116,6 +119,18 @@ class AnalyzerTests(unittest.TestCase):
             result = LlmSubtitleDetectionAnalyzer(FakeClient()).run(_context(video, Path(temporary_dir)))
             self.assertNotIn("secret", json.dumps(result.to_dict(), ensure_ascii=False))
 
+    def test_incomplete_processed_times_add_warning_without_failing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            video = Path(temporary_dir) / "sample.avi"
+            _write_video(video, 20)
+            result = LlmSubtitleDetectionAnalyzer(IncompleteTimesClient()).run(
+                _context(video, Path(temporary_dir))
+            )
+            self.assertEqual(result.status, "completed")
+            self.assertEqual(result.summary["missing_processed_frames"], 1)
+            self.assertEqual(result.data["missing_processed_frame_times"], [1.0])
+            self.assertIn("可能不完整", result.warnings[0]["message"])
+
 
 class FakeClient:
     def detect(self, samples: list[dict]) -> dict:
@@ -135,6 +150,15 @@ class FakeClient:
 class FailingClient:
     def detect(self, samples: list[dict]) -> dict:
         raise RuntimeError("mock API failure")
+
+
+class IncompleteTimesClient:
+    def detect(self, samples: list[dict]) -> dict:
+        return {
+            "processed_frame_times": [samples[0]["time"]],
+            "segments": [],
+            "model": "mimo-v2.5",
+        }
 
 
 class CountingClient:

@@ -67,7 +67,18 @@ class LlmSubtitleDetectionAnalyzer(BaseAnalyzer):
         started = time.perf_counter()
         response = client.detect(samples)
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
-        segments, processed_times = validate_detection_response(response, [sample["time"] for sample in samples])
+        sample_times = [sample["time"] for sample in samples]
+        segments, processed_times = validate_detection_response(response, sample_times)
+        processed_time_set = {round(value, 3) for value in processed_times}
+        missing_times = [value for value in sample_times if round(value, 3) not in processed_time_set]
+        warnings = []
+        if missing_times:
+            warnings.append(
+                {
+                    "message": "MiMo 未报告全部已提交帧的处理时间，检测结果可能不完整。",
+                    "missing_frame_times": missing_times,
+                }
+            )
         assets = save_representative_frames(segments, samples, context.artifact_dir / "llm_subtitle_screenshots")
         events = [_suspected_error_event(segment) for segment in segments if segment["suspected_error"]]
         usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
@@ -87,12 +98,15 @@ class LlmSubtitleDetectionAnalyzer(BaseAnalyzer):
                 "total_tokens": int(usage.get("total_tokens", 0) or 0),
                 "detected_segments": len(segments),
                 "suspected_errors": len(events),
+                "missing_processed_frames": len(missing_times),
             },
             events=events,
             assets=assets,
+            warnings=warnings,
             data={
-                "sample_times": [sample["time"] for sample in samples],
+                "sample_times": sample_times,
                 "processed_frame_times": processed_times,
+                "missing_processed_frame_times": missing_times,
                 "uploads": [
                     {
                         "time": sample["time"],
@@ -208,9 +222,6 @@ def validate_detection_response(
         raise ValueError("MiMo response is missing segments")
     minimum, maximum = min(sample_times), max(sample_times)
     processed_times = [float(value) for value in response["processed_frame_times"]]
-    allowed_times = {round(value, 3) for value in sample_times}
-    if {round(value, 3) for value in processed_times} != allowed_times:
-        raise ValueError("MiMo did not report all submitted frame times")
 
     segments = []
     for raw in response["segments"]:
